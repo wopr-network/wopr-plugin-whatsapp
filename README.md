@@ -1,6 +1,12 @@
 # wopr-plugin-whatsapp
 
+[![npm version](https://img.shields.io/npm/v/wopr-plugin-whatsapp.svg)](https://www.npmjs.com/package/wopr-plugin-whatsapp)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![WOPR](https://img.shields.io/badge/WOPR-Plugin-blue)](https://github.com/TSavo/wopr)
+
 WhatsApp integration for [WOPR](https://github.com/TSavo/wopr) using [Baileys](https://github.com/WhiskeySockets/Baileys) (WhatsApp Web).
+
+> Part of the [WOPR](https://github.com/TSavo/wopr) ecosystem - Self-sovereign AI session management over P2P.
 
 ## Features
 
