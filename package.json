@@ -1,0 +1,40 @@
+{
+  "name": "wopr-plugin-whatsapp",
+  "version": "1.0.0",
+  "description": "WhatsApp plugin for WOPR using Baileys (WhatsApp Web)",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "test": "jest",
+    "lint": "eslint src/**/*.ts",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": [
+    "wopr",
+    "wopr-plugin",
+    "whatsapp",
+    "baileys",
+    "whatsapp-web"
+  ],
+  "author": "TSavo",
+  "license": "MIT",
+  "peerDependencies": {
+    "wopr": "^2.0.0"
+  },
+  "dependencies": {
+    "@whiskeysockets/baileys": "^6.7.9",
+    "qrcode-terminal": "^0.12.0",
+    "pino": "^9.0.0",
+    "winston": "^3.11.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/qrcode-terminal": "^0.12.2",
+    "typescript": "^5.0.0"
+  },
+  "files": [
+    "dist/**/*",
+    "IDENTITY.md"
+  ]
+}
