@@ -1,0 +1,77 @@
+{
+  "_comment": "WOPR WhatsApp Plugin - Business Configuration",
+  "_description": "Configuration for a dedicated business WhatsApp number. Open for customer inquiries with optional spam blocking.",
+  "_security_level": "Medium - Open policy with monitoring",
+  "_use_case": "Customer support, public business bot, community manager",
+  
+  "channels": {
+    "whatsapp": {
+      "_comment": "Account identification - use descriptive name",
+      "accountId": "business",
+      "_comment2": "Options: business, support, sales, marketing, etc.",
+      
+      "_comment3": "DM Policy - open for customer inquiries",
+      "dmPolicy": "open",
+      "_comment4": "open = respond to all DMs (most permissive)",
+      "_comment5": "Alternatives: allowlist (restrictive), blocklist (moderate), disabled (groups only)",
+      
+      "_comment6": "Allowlist - NOT USED with open policy",
+      "allowFrom": [],
+      "_comment7": "With open policy, anyone can message the bot",
+      
+      "_comment8": "Blocklist - block known spammers (optional but recommended)",
+      "blockFrom": [
+        "+19998887777",
+        "+16665554444"
+      ],
+      "_comment9": "Add numbers that have spammed or abused the bot",
+      "_comment10": "E.164 format: +[country code][number] without spaces",
+      
+      "_comment11": "Self-Chat Mode - DISABLED for business numbers",
+      "selfChatMode": false,
+      "_comment12": "This IS the dedicated business number, not your personal phone",
+      "_comment13": "No need to restrict to single owner - customers need to reach it",
+      
+      "_comment14": "Owner Number - optional for business use",
+      "ownerNumber": null,
+      "_comment15": "Can set to business owner for notifications, or leave null",
+      
+      "_comment16": "Verbose logging - recommended for business use",
+      "verbose": true,
+      "_comment17": "Enables detailed logs for customer support tracking",
+      "_comment18": "Log location: ~/.wopr/logs/whatsapp-plugin.log",
+      
+      "_comment19": "Optional: Custom credentials directory",
+      "authDir": null,
+      "_comment20": "Default: ~/.wopr/credentials/whatsapp/business/",
+      "_comment21": "For Docker: set to mounted volume path",
+      
+      "_comment22": "Multi-Account Setup (optional)",
+      "accounts": {
+        "_comment23": "If running multiple business lines, configure here",
+        "sales": {
+          "accountId": "business-sales",
+          "dmPolicy": "open",
+          "blockFrom": [],
+          "selfChatMode": false,
+          "verbose": true
+        },
+        "support": {
+          "accountId": "business-support",
+          "dmPolicy": "open",
+          "blockFrom": [],
+          "selfChatMode": false,
+          "verbose": true
+        }
+      },
+      "_comment24": "Remove 'accounts' section if not using multi-account"
+    }
+  },
+  
+  "_additional_notes": {
+    "monitoring": "Monitor usage and costs - open policy means anyone can use your AI",
+    "rate_limits": "Consider implementing rate limiting in your WOPR agent configuration",
+    "business_hours": "Configure WOPR agent to mention business hours in responses",
+    "escalation": "Set up escalation path for complex issues in your agent prompt"
+  }
+}

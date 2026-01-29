@@ -1,0 +1,43 @@
+{
+  "_comment": "WOPR WhatsApp Plugin - Personal Phone Configuration",
+  "_description": "Safe configuration for using your personal WhatsApp number as a private AI assistant. Prevents accidental spam to friends and family.",
+  "_security_level": "High - Self-chat mode with allowlist",
+  
+  "channels": {
+    "whatsapp": {
+      "_comment": "Account identification",
+      "accountId": "personal",
+      
+      "_comment2": "DM Policy - only respond to allowed numbers",
+      "dmPolicy": "allowlist",
+      
+      "_comment3": "Allowlist - only these numbers can DM the bot",
+      "allowFrom": [
+        "+1234567890"
+      ],
+      "_comment4": "IMPORTANT: Replace +1234567890 with your actual phone number in E.164 format",
+      "_comment5": "E.164 format: +[country code][number] without spaces or dashes",
+      "_comment6": "Examples: +14155551234 (US), +447700900123 (UK), +919876543210 (India)",
+      
+      "_comment7": "Self-Chat Mode - CRITICAL for personal numbers",
+      "selfChatMode": true,
+      "_comment8": "When enabled, bot only responds to ownerNumber, preventing accidental replies to contacts",
+      
+      "_comment9": "Owner Number - your phone number (required for self-chat mode)",
+      "ownerNumber": "+1234567890",
+      "_comment10": "IMPORTANT: Replace with your actual phone number",
+      
+      "_comment11": "Verbose logging - disable for normal use, enable for debugging",
+      "verbose": false,
+      "_comment12": "Logs are stored in ~/.wopr/logs/whatsapp-plugin.log",
+      
+      "_comment13": "Optional: Custom credentials directory",
+      "authDir": null,
+      "_comment14": "Default: ~/.wopr/credentials/whatsapp/personal/",
+      
+      "_comment15": "Optional: Block specific numbers (only used with dmPolicy: blocklist)",
+      "blockFrom": [],
+      "_comment16": "Example blockFrom: [\"+19998887777\", \"+16665554444\"]"
+    }
+  }
+}
