@@ -11,39 +11,38 @@ Connect your WOPR AI agent to the world's most popular messaging platform. Chat 
 
 ---
 
-## 📋 Table of Contents
+## Table of Contents
 
-- [Features](#-features)
-- [Installation](#-installation)
-- [Quick Start](#-quick-start)
-- [Self-Chat Mode](#-self-chat-mode-for-personal-phones)
-- [Configuration](#-configuration)
-- [Multi-Account Setup](#-multi-account-setup)
-- [Commands](#-commands)
-- [Documentation](#-documentation)
-- [Security](#-security)
-- [Troubleshooting](#-troubleshooting)
-- [Related Projects](#-related-projects)
+- [Features](#features)
+- [Installation](#installation)
+- [Quick Start](#quick-start)
+- [Self-Chat Mode](#self-chat-mode-for-personal-phones)
+- [Configuration](#configuration)
+- [Multi-Account Setup](#multi-account-setup)
+- [Commands](#commands)
+- [Security](#security)
+- [Troubleshooting](#troubleshooting)
+- [Architecture](#architecture)
+- [Related Projects](#related-projects)
 
 ---
 
-## ✨ Features
+## Features
 
 | Feature | Description |
 |---------|-------------|
-| 📱 **WhatsApp Web Connection** | Seamless QR code pairing with your WhatsApp account |
-| 👥 **Group Support** | Full group chat integration with mention detection |
-| 🔒 **DM Policies** | Granular control: allowlist, blocklist, open, or disabled |
-| 💬 **Self-Chat Mode** | Use your personal number without spamming contacts |
-| 👀 **Identity Reactions** | Reacts with your agent's emoji when processing messages |
-| 📝 **Smart Message Chunking** | Automatically splits long responses (4000 char limit) |
-| 🔧 **Multi-Account** | Run multiple WhatsApp numbers from one WOPR instance |
-| 💾 **Auto-Backup** | Credentials backed up automatically to prevent data loss |
-| 🔄 **Auto-Reconnect** | Handles connection drops and session restoration |
+| **WhatsApp Web Connection** | QR code pairing with your WhatsApp account |
+| **Group Support** | Full group chat integration |
+| **DM Policies** | Control access: allowlist, open, or disabled |
+| **Self-Chat Mode** | Use your personal number without spamming contacts |
+| **Identity Reactions** | Reacts with your agent's emoji when processing messages |
+| **Smart Message Chunking** | Automatically splits long responses (4000 char limit) |
+| **Multi-Account** | Run multiple WhatsApp numbers from one WOPR instance |
+| **Credential Backup Restore** | Restore credentials from backup if primary is lost |
 
 ---
 
-## 📦 Installation
+## Installation
 
 ### Via WOPR CLI (Recommended)
 
@@ -60,12 +59,13 @@ npm install wopr-plugin-whatsapp
 ### Requirements
 
 - Node.js 18+
+- WOPR ^2.0.0 (peer dependency)
 - WhatsApp app on your phone (iOS/Android)
 - Terminal that supports QR codes (most modern terminals)
 
 ---
 
-## 🚀 Quick Start
+## Quick Start
 
 ### 1. Login to WhatsApp
 
@@ -77,8 +77,8 @@ You'll see a QR code in your terminal. Scan it with WhatsApp:
 
 | Platform | Steps |
 |----------|-------|
-| **iOS** | Settings → Linked Devices → Link a Device |
-| **Android** | ⋮ Menu → Linked Devices → Link a Device |
+| **iOS** | Settings -> Linked Devices -> Link a Device |
+| **Android** | Menu -> Linked Devices -> Link a Device |
 
 ### 2. Test Your Connection
 
@@ -92,9 +92,9 @@ wopr configure --plugin whatsapp
 
 ---
 
-## 💬 Self-Chat Mode (For Personal Phones)
+## Self-Chat Mode (For Personal Phones)
 
-**⚠️ Important:** If you're using your personal WhatsApp number, enable **Self-Chat Mode** to prevent accidentally spamming your contacts.
+**Important:** If you're using your personal WhatsApp number, enable **Self-Chat Mode** to prevent accidentally spamming your contacts.
 
 ### What is Self-Chat Mode?
 
@@ -119,20 +119,17 @@ channels:
     ownerNumber: "+1234567890"
 ```
 
-> 📖 See [docs/CONFIGURATION.md](./docs/CONFIGURATION.md) for all options.
-
 ---
 
-## ⚙️ Configuration
+## Configuration
 
 ### Quick Reference
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
-| `accountId` | string | `default` | Unique identifier for multi-account support |
-| `dmPolicy` | string | `allowlist` | DM handling: `allowlist`, `blocklist`, `open`, `disabled` |
-| `allowFrom` | string[] | `[]` | Allowed phone numbers (E.164 format) |
-| `blockFrom` | string[] | `[]` | Blocked phone numbers (E.164 format) |
+| `accountId` | string | `"default"` | Unique identifier for multi-account support |
+| `dmPolicy` | string | `"allowlist"` | DM handling: `allowlist`, `open`, or `disabled` |
+| `allowFrom` | string[] | `[]` | Allowed phone numbers (E.164 format). Use `["*"]` to allow all. |
 | `selfChatMode` | boolean | `false` | Enable for personal phone numbers |
 | `ownerNumber` | string | - | Your number for self-chat mode |
 | `verbose` | boolean | `false` | Enable detailed Baileys logging |
@@ -140,108 +137,84 @@ channels:
 
 ### Policy Modes Explained
 
-- **`allowlist`** - Only respond to numbers in `allowFrom` (recommended)
-- **`blocklist`** - Respond to everyone except numbers in `blockFrom`
+- **`allowlist`** - Only respond to numbers in `allowFrom` (recommended). Use `["*"]` in allowFrom to allow everyone.
 - **`open`** - Respond to all DMs (use with caution)
 - **`disabled`** - Ignore all DMs (groups still work)
 
-> 📖 Detailed configuration guide: [docs/CONFIGURATION.md](./docs/CONFIGURATION.md)
+**Note:** Group messages are always processed regardless of DM policy.
 
 ---
 
-## 👥 Multi-Account Setup
+## Multi-Account Setup
 
-Run multiple WhatsApp accounts from a single WOPR instance:
+Run multiple WhatsApp accounts by setting different `accountId` values. Each account stores credentials separately:
 
 ```yaml
 # ~/.wopr/config.yaml
 channels:
   whatsapp:
-    accounts:
-      personal:
-        accountId: "personal"
-        dmPolicy: "allowlist"
-        allowFrom:
-          - "+1234567890"
-        selfChatMode: true
-      business:
-        accountId: "business"
-        dmPolicy: "open"
+    accountId: "personal"
+    dmPolicy: "allowlist"
+    allowFrom:
+      - "+1234567890"
+    selfChatMode: true
 ```
 
-Credentials are stored separately:
+Credentials are stored per account:
 ```
 ~/.wopr/credentials/whatsapp/
+├── default/
+│   └── creds.json
 ├── personal/
 │   └── creds.json
 └── business/
     └── creds.json
 ```
 
-> 📖 Complete multi-account guide: [docs/MULTI_ACCOUNT.md](./docs/MULTI_ACCOUNT.md)
-
 ---
 
-## 🖥️ Commands
+## Commands
 
 | Command | Description |
 |---------|-------------|
 | `wopr channels login whatsapp` | Login with QR code |
-| `wopr channels login whatsapp --account business` | Login specific account |
 | `wopr channels logout whatsapp` | Logout and clear credentials |
-| `wopr channels logout whatsapp --account business` | Logout specific account |
 | `wopr channels status whatsapp` | Check connection status |
 | `wopr configure --plugin whatsapp` | Interactive configuration |
 
 ---
 
-## 📚 Documentation
-
-- **[CONFIGURATION.md](./docs/CONFIGURATION.md)** - Complete configuration reference
-- **[TROUBLESHOOTING.md](./docs/TROUBLESHOOTING.md)** - Common issues and solutions
-- **[MULTI_ACCOUNT.md](./docs/MULTI_ACCOUNT.md)** - Multi-number setup guide
-- **[SECURITY.md](./docs/SECURITY.md)** - Security best practices
-
-### Example Configurations
-
-- **[Personal Phone Setup](./examples/personal-phone-config.json)** - Safe self-chat configuration
-- **[Business Setup](./examples/business-config.json)** - Open business bot configuration
-
----
-
-## 🔒 Security
+## Security
 
 ### Data Storage
 
-- Credentials stored locally in `~/.wopr/credentials/whatsapp/`
-- Automatic backup of credentials to prevent data loss
-- Auth state uses multi-file JSON storage
+- Credentials stored locally in `~/.wopr/credentials/whatsapp/<accountId>/`
+- Auth state uses Baileys multi-file JSON storage
+- If `creds.json` is lost, the plugin attempts to restore from `creds.json.bak`
 
 ### Access Control
 
-- DM policies to control message access
-- Self-chat mode to prevent accidental spam
-- Phone number allowlisting/blocklisting
+- DM policies control who can message the bot
+- Self-chat mode prevents accidental responses to contacts
+- Phone number allowlisting with E.164 format validation
 
 ### Best Practices
 
-1. ✅ Use `allowlist` policy with `selfChatMode` for personal numbers
-2. ✅ Keep credentials directory secure (`chmod 700`)
-3. ✅ Use separate accounts for personal/business use
-4. ✅ Regularly backup `~/.wopr/credentials/`
-
-> 📖 Full security guide: [docs/SECURITY.md](./docs/SECURITY.md)
+1. Use `allowlist` policy with `selfChatMode` for personal numbers
+2. Keep credentials directory secure (`chmod 700`)
+3. Use separate accounts for personal/business use
+4. Regularly backup `~/.wopr/credentials/`
 
 ---
 
-## 🔧 Troubleshooting
+## Troubleshooting
 
 ### QR Code Issues
 
 **QR code not appearing?**
 - Ensure your terminal supports Unicode and has sufficient width (80+ chars)
 - Try resizing your terminal window
-- Use `wopr channels login whatsapp --verbose` for details
+- Enable verbose logging in config to see more details
 
 **QR code scanning fails?**
 - Clean your phone camera lens
@@ -262,58 +235,105 @@ wopr channels login whatsapp
 - Verify the bot is added to the group (for group chats)
 - Check logs: `~/.wopr/logs/whatsapp-plugin.log`
 
-> 📖 Complete troubleshooting: [docs/TROUBLESHOOTING.md](./docs/TROUBLESHOOTING.md)
+### Logging
+
+The plugin writes logs to:
+- `~/.wopr/logs/whatsapp-plugin.log` - All debug logs
+- `~/.wopr/logs/whatsapp-plugin-error.log` - Errors only
+- Console shows warnings and above
 
 ---
 
-## 🏗️ Architecture
+## Architecture
 
 ```
-┌─────────────────┐     ┌──────────────┐     ┌─────────────────┐
-│   WhatsApp App  │◄───►│   Baileys    │◄───►│  WOPR WhatsApp  │
-│   (Your Phone)  │     │  (WhatsApp   │     │     Plugin      │
-│                 │     │    Web API)  │     │                 │
-└─────────────────┘     └──────────────┘     └────────┬────────┘
-                                                      │
-                           ┌──────────────────────────┘
-                           ▼
-                    ┌──────────────┐
-                    │     WOPR     │
-                    │    Core      │
-                    └──────────────┘
++------------------+     +---------------+     +------------------+
+|   WhatsApp App   |<--->|    Baileys    |<--->|  WOPR WhatsApp   |
+|   (Your Phone)   |     |  (WhatsApp    |     |     Plugin       |
+|                  |     |   Web API)    |     |                  |
++------------------+     +---------------+     +--------+---------+
+                                                        |
+                            +---------------------------+
+                            v
+                     +--------------+
+                     |     WOPR     |
+                     |     Core     |
+                     +--------------+
 ```
 
 ### Components
 
-- **Baileys** - WhatsApp Web library for Node.js (no Puppeteer/Chrome needed)
-- **Multi-file auth state** - Credentials stored in JSON files
-- **QR Terminal** - Display QR codes directly in terminal
-- **Winston logger** - Structured logging with file rotation
+| Component | Description |
+|-----------|-------------|
+| **Baileys** | WhatsApp Web library for Node.js (no Puppeteer/Chrome needed) |
+| **Multi-file auth state** | Credentials stored as JSON files via Baileys |
+| **qrcode-terminal** | Displays QR codes directly in terminal |
+| **Winston logger** | Structured logging to file and console |
+| **Pino** | Internal logger used by Baileys (silent by default) |
+
+### Dependencies
+
+```json
+{
+  "@whiskeysockets/baileys": "^6.7.9",
+  "qrcode-terminal": "^0.12.0",
+  "pino": "^9.0.0",
+  "winston": "^3.11.0"
+}
+```
+
+### Message Flow
+
+1. User sends message via WhatsApp
+2. Baileys receives message via WhatsApp Web protocol
+3. Plugin checks DM policy for authorization
+4. Plugin sends reaction (agent emoji) as acknowledgment
+5. Message is injected into WOPR for processing
+6. Response is chunked (if > 4000 chars) and sent back via Baileys
 
 ---
 
-## 🤝 Related Projects
+## API
+
+### Exported Functions
+
+```typescript
+// Login with QR code - displays QR in terminal
+export async function login(): Promise<void>
+
+// Logout and clear credentials
+export async function logout(): Promise<void>
+```
+
+### Plugin Interface
+
+The plugin exports a default `WOPRPlugin` object:
+
+```typescript
+export default {
+  name: "whatsapp",
+  version: "1.0.0",
+  description: "WhatsApp integration using Baileys (WhatsApp Web)",
+  init: (context: WOPRPluginContext) => Promise<void>,
+  shutdown: () => Promise<void>
+}
+```
+
+---
+
+## Related Projects
 
 | Project | Description |
 |---------|-------------|
-| [WOPR](https://github.com/TSavo/wopr) | 🎯 Main WOPR project - Self-sovereign AI session management |
-| [Baileys](https://github.com/WhiskeySockets/Baileys) | 📱 WhatsApp Web API library |
-| [wopr-plugin-discord](https://github.com/TSavo/wopr-plugin-discord) | 💬 Discord integration for WOPR |
-| [wopr-plugin-slack](https://github.com/TSavo/wopr-plugin-slack) | 💼 Slack integration for WOPR |
-| [wopr-plugin-telegram](https://github.com/TSavo/wopr-plugin-telegram) | ✈️ Telegram integration for WOPR |
+| [WOPR](https://github.com/TSavo/wopr) | Main WOPR project - Self-sovereign AI session management |
+| [Baileys](https://github.com/WhiskeySockets/Baileys) | WhatsApp Web API library |
 
 ---
 
-## 📄 License
+## License
 
-MIT © [TSavo](https://github.com/TSavo)
+MIT
 
 ---
 
-<div align="center">
-
-**[⬆ Back to Top](#wopr-plugin-whatsapp)**
-
-Made with 💚 for the WOPR ecosystem
-
-</div>
+[Back to Top](#wopr-plugin-whatsapp)
