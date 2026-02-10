@@ -1,34 +1,14 @@
 {
-  "name": "wopr-plugin-whatsapp",
-  "version": "1.0.0",
-  "description": "WhatsApp plugin for WOPR using Baileys (WhatsApp Web)",
-  "main": "dist/index.js",
-  "types": "dist/index.d.ts",
-  "scripts": {
-    "build": "tsc",
-    "test": "jest",
-    "lint": "eslint src/**/*.ts",
-    "prepublishOnly": "npm run build"
-  },
-  "keywords": [
-    "wopr",
-    "wopr-plugin",
-    "whatsapp",
-    "baileys",
-    "whatsapp-web"
-  ],
   "author": "TSavo",
-  "license": "MIT",
-  "peerDependencies": {
-    "wopr": "^2.0.0"
-  },
   "dependencies": {
     "@whiskeysockets/baileys": "^6.7.9",
-    "qrcode-terminal": "^0.12.0",
     "pino": "^9.0.0",
+    "qrcode-terminal": "^0.12.0",
     "winston": "^3.11.0"
   },
+  "description": "WhatsApp plugin for WOPR using Baileys (WhatsApp Web)",
   "devDependencies": {
+    "@biomejs/biome": "^2.3.14",
     "@types/node": "^20.0.0",
     "@types/qrcode-terminal": "^0.12.2",
     "typescript": "^5.0.0"
@@ -36,5 +16,29 @@
   "files": [
     "dist/**/*",
     "IDENTITY.md"
-  ]
+  ],
+  "keywords": [
+    "wopr",
+    "wopr-plugin",
+    "whatsapp",
+    "baileys",
+    "whatsapp-web"
+  ],
+  "license": "MIT",
+  "main": "dist/index.js",
+  "name": "wopr-plugin-whatsapp",
+  "peerDependencies": {
+    "wopr": "^2.0.0"
+  },
+  "scripts": {
+    "build": "tsc",
+    "check": "biome check src/ && tsc --noEmit",
+    "format": "biome format --write src/",
+    "lint": "eslint src/**/*.ts",
+    "lint:fix": "biome check --fix src/",
+    "prepublishOnly": "npm run build",
+    "test": "jest"
+  },
+  "types": "dist/index.d.ts",
+  "version": "1.0.0"
 }
