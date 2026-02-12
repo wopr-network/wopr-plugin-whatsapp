@@ -2,6 +2,7 @@
   "author": "TSavo",
   "dependencies": {
     "@whiskeysockets/baileys": "^6.7.9",
+    "@wopr-network/plugin-types": "github:wopr-network/wopr-plugin-types",
     "pino": "^9.0.0",
     "qrcode-terminal": "^0.12.0",
     "winston": "^3.11.0"

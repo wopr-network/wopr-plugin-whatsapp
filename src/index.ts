@@ -24,10 +24,10 @@ import qrcode from "qrcode-terminal";
 import winston from "winston";
 import type {
 	AgentIdentity,
-	ChannelInfo,
+	ChannelRef,
+	ConfigField,
 	ConfigSchema,
-	InjectOptions,
-	LogMessageOptions,
+	PluginInjectOptions,
 	StreamMessage,
 	WOPRPlugin,
 	WOPRPluginContext,
@@ -232,7 +232,7 @@ const configSchema: ConfigSchema = {
 			default: false,
 			description: "Enable detailed Baileys logging",
 		},
-		{ name: "pairingRequests", type: "object", hidden: true, default: {} },
+		{ name: "pairingRequests", type: "object", label: "Pairing Requests", hidden: true, default: {} } as ConfigField,
 	],
 };
 
@@ -549,14 +549,14 @@ async function handleIncomingMessage(msg: WAMessage): Promise<void> {
 	messageCache.set(messageId, waMessage);
 
 	// Create channel info
-	const channelInfo: ChannelInfo = {
+	const channelInfo: ChannelRef = {
 		type: "whatsapp",
 		id: from,
 		name: groupName || (isGroup ? "Group" : "WhatsApp DM"),
 	};
 
 	// Log message for context
-	const logOptions: LogMessageOptions = {
+	const logOptions: { from?: string; channel?: ChannelRef } = {
 		from: sender || from,
 		channel: channelInfo,
 	};
@@ -929,19 +929,19 @@ async function injectMessage(
 
 	const messageWithPrefix = prefix + messageContent;
 
-	const channelInfo: ChannelInfo = {
+	const channelInfo: ChannelRef = {
 		type: "whatsapp",
 		id: waMsg.from,
 		name: waMsg.groupName || (waMsg.isGroup ? "Group" : "WhatsApp DM"),
 	};
 
-	// Pass image paths via InjectOptions.images for vision-capable models
+	// Pass image paths via PluginInjectOptions.images for vision-capable models
 	const images: string[] = [];
 	if (waMsg.mediaPath && waMsg.mediaType === "image") {
 		images.push(waMsg.mediaPath);
 	}
 
-	const injectOptions: InjectOptions = {
+	const injectOptions: PluginInjectOptions = {
 		from: waMsg.sender || waMsg.from,
 		channel: channelInfo,
 		onStream: (msg: StreamMessage) => handleStreamChunk(msg, waMsg),
