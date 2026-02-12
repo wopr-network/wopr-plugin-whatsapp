@@ -88,6 +88,7 @@ let agentIdentity: AgentIdentity = { name: "WOPR", emoji: "👀" };
 const contacts: Map<string, Contact> = new Map();
 const groups: Map<string, GroupMetadata> = new Map();
 const messageCache: Map<string, WhatsAppMessage> = new Map();
+const sessionOverrides: Map<string, string> = new Map();
 let logger: winston.Logger;
 
 // Typing indicator refresh interval (composing status expires after ~10s in WhatsApp)
@@ -397,7 +398,8 @@ function handleIncomingMessage(msg: WAMessage): void {
 		channel: channelInfo,
 	};
 
-	const sessionKey = `whatsapp-${from}`;
+	const defaultKey = `whatsapp-${from}`;
+	const sessionKey = sessionOverrides.get(defaultKey) || defaultKey;
 	ctx.logMessage(sessionKey, text || "[media]", logOptions);
 
 	// Send ack reaction
@@ -486,7 +488,7 @@ async function handleTextCommand(
 			sessionStates.delete(sessionKey);
 			await sendMessageInternal(
 				waMsg.from,
-				"*Session Reset*\n\nStarting fresh! Your conversation history has been cleared.",
+				"*Session Reset*\n\nLocal session state (thinking level, model preference, message count) has been cleared. Note: WOPR core conversation context is not affected.",
 			);
 			return true;
 		}
@@ -539,7 +541,7 @@ async function handleTextCommand(
 			const modelChoice = cmd.args.toLowerCase();
 			// Use ctx.setSessionProvider if available, otherwise just track locally
 			const ctxAny = ctx as any;
-			if (ctxAny.setSessionProvider) {
+			if (typeof ctxAny.setSessionProvider === "function") {
 				try {
 					// Try to resolve model via provider registry (same as Discord plugin)
 					const providerIds = [
@@ -552,7 +554,10 @@ async function handleTextCommand(
 					let resolved: { provider: string; id: string; name: string } | null =
 						null;
 					for (const pid of providerIds) {
-						const provider = ctxAny.getProvider?.(pid);
+						const provider =
+							typeof ctxAny.getProvider === "function"
+								? ctxAny.getProvider(pid)
+								: undefined;
 						if (!provider?.supportedModels) continue;
 						for (const modelId of provider.supportedModels as string[]) {
 							if (modelId === modelChoice || modelId.includes(modelChoice)) {
@@ -592,29 +597,40 @@ async function handleTextCommand(
 		}
 
 		case "session": {
+			const defaultKey = `whatsapp-${waMsg.from}`;
 			if (!cmd.args) {
 				await sendMessageInternal(
 					waMsg.from,
-					`*Current Session:* ${sessionKey}\n\nUsage: !session <name>`,
+					`*Current Session:* ${sessionKey}\n\nUsage: !session <name>\nUse !session default to reset to the default session.`,
 				);
 				return true;
 			}
-			// Session switching is handled by changing the session key for future messages.
-			// We inform the user but note that WhatsApp sessions are keyed by chat JID,
-			// so named sub-sessions would require more infrastructure.
-			const newKey = `${sessionKey}/${cmd.args}`;
-			await sendMessageInternal(
-				waMsg.from,
-				`*Switched to session:* ${newKey}\n\nNote: Each session maintains separate context.`,
-			);
+			if (cmd.args === "default") {
+				sessionOverrides.delete(defaultKey);
+				await sendMessageInternal(
+					waMsg.from,
+					`*Session reset to default:* ${defaultKey}`,
+				);
+			} else {
+				const newKey = `${defaultKey}/${cmd.args}`;
+				sessionOverrides.set(defaultKey, newKey);
+				await sendMessageInternal(
+					waMsg.from,
+					`*Switched to session:* ${newKey}\n\nNote: Each session maintains separate context. Use !session default to switch back.`,
+				);
+			}
 			return true;
 		}
 
 		case "cancel": {
 			const ctxAny2 = ctx as any;
 			let cancelled = false;
-			if (ctxAny2.cancelInject) {
-				cancelled = ctxAny2.cancelInject(sessionKey);
+			if (typeof ctxAny2.cancelInject === "function") {
+				try {
+					cancelled = ctxAny2.cancelInject(sessionKey);
+				} catch (e) {
+					logger.warn(`cancelInject failed: ${e}`);
+				}
 			}
 			if (cancelled) {
 				await sendMessageInternal(
@@ -990,6 +1006,11 @@ const plugin: WOPRPlugin = {
 			await socket.logout();
 			socket = null;
 		}
+		sessionStates.clear();
+		messageCache.clear();
+		contacts.clear();
+		groups.clear();
+		sessionOverrides.clear();
 		ctx = null;
 	},
 };
