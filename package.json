@@ -25,6 +25,9 @@
     "whatsapp-web"
   ],
   "license": "MIT",
+  "overrides": {
+    "axios": "^1.13.5"
+  },
   "main": "dist/index.js",
   "name": "wopr-plugin-whatsapp",
   "peerDependencies": {
