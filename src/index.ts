@@ -2,7 +2,7 @@
  * WOPR WhatsApp Plugin - Baileys-based WhatsApp Web integration
  */
 
-import fs from "node:fs/promises";
+import fs, { realpath } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import {
@@ -126,6 +126,33 @@ const typingRefCounts: Map<string, { count: number; interval: NodeJS.Timeout }> 
 const WOPR_HOME =
 	process.env.WOPR_HOME || path.join(process.env.HOME || "~", ".wopr");
 const ATTACHMENTS_DIR = path.join(WOPR_HOME, "attachments", "whatsapp");
+
+// Maximum download size (default 100 MB, configurable via env)
+const MAX_MEDIA_BYTES = Number(process.env.WOPR_WA_MAX_MEDIA_BYTES) || 100 * 1024 * 1024;
+
+// Allowed MIME-type prefixes for outbound media
+const ALLOWED_MIME_PREFIXES = ["image/", "audio/", "video/", "application/pdf", "application/octet-stream"];
+
+/** Return true if `filePath` resolves inside `allowedDir` (realpath check). */
+async function isInsideDir(filePath: string, allowedDir: string): Promise<boolean> {
+  try {
+    const resolvedFile = await realpath(filePath);
+    const resolvedDir = await realpath(allowedDir);
+    return resolvedFile.startsWith(resolvedDir + path.sep) || resolvedFile === resolvedDir;
+  } catch {
+    return false;
+  }
+}
+
+/** Sanitize a filename: strip path separators, control chars, and fallback to a hash. */
+function sanitizeFilename(name: string): string {
+  // Remove anything that isn't alphanumeric, dot, dash, or underscore
+  const clean = name.replace(/[^a-zA-Z0-9._-]/g, "_");
+  if (!clean || clean === "." || clean === "..") {
+    return `file_${Date.now()}`;
+  }
+  return clean;
+}
 
 // Initialize winston logger
 function initLogger(): winston.Logger {
@@ -383,13 +410,21 @@ async function downloadWhatsAppMedia(msg: WAMessage): Promise<string | null> {
   try {
     await ensureAttachmentsDir();
 
-    const ext = extensionForMediaMessage(msg.message!);
+    const ext = sanitizeFilename(extensionForMediaMessage(msg.message!) || "bin");
     const timestamp = Date.now();
-    const senderId = (msg.key.participant || msg.key.remoteJid || "unknown").split("@")[0];
+    const rawSenderId = (msg.key.participant || msg.key.remoteJid || "unknown").split("@")[0];
+    const senderId = sanitizeFilename(rawSenderId);
     const filename = `${timestamp}-${senderId}.${ext}`;
     const filepath = path.join(ATTACHMENTS_DIR, filename);
 
     const buffer = await downloadMediaMessage(msg, "buffer", {});
+
+    // Enforce file size limit
+    if (buffer.length > MAX_MEDIA_BYTES) {
+      logger.warn(`Media too large (${buffer.length} bytes, limit ${MAX_MEDIA_BYTES}), skipping`);
+      return null;
+    }
+
     await fs.writeFile(filepath, buffer);
 
     logger.info(`Media saved: ${filename} (${buffer.length} bytes)`);
@@ -459,6 +494,13 @@ async function handleIncomingMessage(msg: WAMessage): Promise<void> {
 		const downloaded = await downloadWhatsAppMedia(msg);
 		if (downloaded) {
 			mediaPath = downloaded;
+		} else {
+			// Notify user that media could not be processed
+			try {
+				await sendMessageInternal(from, "Sorry, I could not process that media file.");
+			} catch (notifyErr) {
+				logger.error(`Failed to send media error notification: ${String(notifyErr)}`);
+			}
 		}
 	}
 
@@ -520,8 +562,17 @@ async function handleIncomingMessage(msg: WAMessage): Promise<void> {
 	// No text — skip if no media either
 	if (!mediaPath) return;
 
-	// Media only — inject as-is
-	await injectMessage(waMessage, sessionKey);
+	// Media only — inject into WOPR, then clean up temp media
+	try {
+		await injectMessage(waMessage, sessionKey);
+	} finally {
+		// Clean up downloaded media after processing
+		if (mediaPath) {
+			fs.unlink(mediaPath).catch((err) => {
+				logger.warn(`Failed to clean up temp media ${mediaPath}: ${String(err)}`);
+			});
+		}
+	}
 }
 
 // Send reaction internally
@@ -915,10 +966,23 @@ async function sendMediaInternal(to: string, filePath: string, caption?: string)
     throw new Error("WhatsApp not connected");
   }
 
+  // Verify file exists and is readable before proceeding (finding 8)
+  try {
+    await fs.access(filePath);
+  } catch {
+    throw new Error(`File not found or not readable: ${filePath}`);
+  }
+
   const jid = toJid(to);
   const ext = path.extname(filePath).toLowerCase();
-  const buffer = await fs.readFile(filePath);
   const stat = await fs.stat(filePath);
+
+  // Enforce outbound file size limit
+  if (stat.size > MAX_MEDIA_BYTES) {
+    throw new Error(`File too large to send (${stat.size} bytes, limit ${MAX_MEDIA_BYTES})`);
+  }
+
+  const buffer = await fs.readFile(filePath);
 
   // Determine media type from extension
   const imageExts = [".jpg", ".jpeg", ".png", ".gif", ".webp"];
@@ -964,7 +1028,7 @@ const FILE_PATH_PATTERN = /\[(?:File|Media|Image|Attachment):\s*([^\]]+)\]/gi;
 async function sendResponse(to: string, response: string): Promise<void> {
   // Extract any file paths from the response
   const filePaths: string[] = [];
-  let textOnly = response.replace(FILE_PATH_PATTERN, (match, filePath: string) => {
+  let textOnly = response.replace(FILE_PATH_PATTERN, (_match, filePath: string) => {
     filePaths.push(filePath.trim());
     return "";
   }).trim();
@@ -974,13 +1038,16 @@ async function sendResponse(to: string, response: string): Promise<void> {
     await sendMessageInternal(to, textOnly);
   }
 
-  // Send each media file
+  // Send each media file -- ONLY if it resides inside ATTACHMENTS_DIR (finding 1: prevent file exfiltration)
   for (const fp of filePaths) {
     try {
-      await fs.access(fp);
+      if (!(await isInsideDir(fp, ATTACHMENTS_DIR))) {
+        logger.warn(`Blocked file send outside attachments directory: ${fp}`);
+        continue;
+      }
       await sendMediaInternal(to, fp);
     } catch {
-      logger.warn(`Referenced file not found, skipping: ${fp}`);
+      logger.warn(`Referenced file not found or not sendable, skipping: ${fp}`);
     }
   }
 }
