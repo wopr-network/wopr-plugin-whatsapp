@@ -30,7 +30,7 @@
     "axios": "^1.13.5"
   },
   "main": "dist/index.js",
-  "name": "wopr-plugin-whatsapp",
+  "name": "@wopr-network/wopr-plugin-whatsapp",
   "peerDependencies": {
     "wopr": "^2.0.0"
   },
@@ -44,5 +44,8 @@
     "test": "jest"
   },
   "types": "dist/index.d.ts",
-  "version": "1.0.0"
+  "version": "1.0.0",
+  "publishConfig": {
+    "access": "public"
+  }
 }
