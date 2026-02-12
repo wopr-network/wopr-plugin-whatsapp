@@ -1,90 +1,28 @@
 /**
- * Local type definitions for WOPR WhatsApp Plugin
+ * Re-export shared types from @wopr-network/plugin-types,
+ * plus plugin-specific extensions for wopr-plugin-whatsapp.
  */
 
-export interface ConfigField {
-  name: string;
-  type: string;
-  label?: string;
-  placeholder?: string;
-  required?: boolean;
-  description?: string;
+// Re-export all shared types used by this plugin
+export type {
+  AgentIdentity,
+  ChannelRef,
+  ConfigSchema,
+  PluginInjectOptions,
+  PluginLogger,
+  StreamMessage,
+  UserProfile,
+  WOPRPlugin,
+  WOPRPluginContext,
+} from "@wopr-network/plugin-types";
+
+// Import ConfigField so we can extend it
+import type { ConfigField as SharedConfigField } from "@wopr-network/plugin-types";
+
+/**
+ * Extended ConfigField with `hidden` support used by this plugin's
+ * config schema (e.g., the pairingRequests field).
+ */
+export interface ConfigField extends SharedConfigField {
   hidden?: boolean;
-  default?: any;
-}
-
-export interface ConfigSchema {
-  title: string;
-  description: string;
-  fields: ConfigField[];
-}
-
-export interface StreamMessage {
-  type: "text" | "assistant";
-  content: string;
-}
-
-export interface ChannelInfo {
-  type: string;
-  id: string;
-  name?: string;
-}
-
-export interface InjectOptions {
-  silent?: boolean;
-  onStream?: (msg: StreamMessage) => void;
-  from?: string;
-  channel?: ChannelInfo;
-  images?: string[];
-}
-
-export interface LogMessageOptions {
-  from?: string;
-  channel?: ChannelInfo;
-}
-
-export interface PluginLogger {
-  info: (...args: any[]) => void;
-  warn: (...args: any[]) => void;
-  error: (...args: any[]) => void;
-}
-
-export interface AgentIdentity {
-  name?: string;
-  creature?: string;
-  vibe?: string;
-  emoji?: string;
-}
-
-export interface UserProfile {
-  name?: string;
-  preferredAddress?: string;
-  pronouns?: string;
-  timezone?: string;
-  notes?: string;
-}
-
-export interface WOPRPluginContext {
-  inject: (session: string, message: string, options?: InjectOptions) => Promise<string>;
-  logMessage: (session: string, message: string, options?: LogMessageOptions) => void;
-  injectPeer: (peer: string, session: string, message: string) => Promise<string>;
-  getIdentity: () => { publicKey: string; shortId: string; encryptPub: string };
-  getAgentIdentity: () => AgentIdentity | Promise<AgentIdentity>;
-  getUserProfile: () => UserProfile | Promise<UserProfile>;
-  getSessions: () => string[];
-  getPeers: () => any[];
-  getConfig: <T = any>() => T;
-  saveConfig: <T>(config: T) => Promise<void>;
-  getMainConfig: (key?: string) => any;
-  registerConfigSchema: (pluginId: string, schema: ConfigSchema) => void;
-  getPluginDir: () => string;
-  log: PluginLogger;
-}
-
-export interface WOPRPlugin {
-  name: string;
-  version: string;
-  description: string;
-  init?: (context: WOPRPluginContext) => Promise<void>;
-  shutdown?: () => Promise<void>;
 }
