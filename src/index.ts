@@ -67,6 +67,9 @@ let groups: Map<string, GroupMetadata> = new Map();
 let messageCache: Map<string, WhatsAppMessage> = new Map();
 let logger: winston.Logger;
 
+// Typing indicator refresh interval (composing status expires after ~10s in WhatsApp)
+const TYPING_REFRESH_MS = 5000;
+
 // Initialize winston logger
 function initLogger(): winston.Logger {
   const WOPR_HOME = process.env.WOPR_HOME || path.join(process.env.HOME || "~", ".wopr");
@@ -354,27 +357,60 @@ async function sendReactionInternal(chatJid: string, messageId: string, emoji: s
   });
 }
 
+// Start typing indicator with auto-refresh
+function startTypingIndicator(jid: string): NodeJS.Timeout | null {
+  if (!socket) return null;
+
+  const sock = socket;
+  // Send initial composing presence
+  sock.sendPresenceUpdate("composing", jid).catch(() => {});
+
+  // Refresh every TYPING_REFRESH_MS since WhatsApp composing status expires
+  const interval = setInterval(() => {
+    sock.sendPresenceUpdate("composing", jid).catch(() => {});
+  }, TYPING_REFRESH_MS);
+
+  return interval;
+}
+
+// Stop typing indicator
+function stopTypingIndicator(jid: string, interval: NodeJS.Timeout | null): void {
+  if (interval) {
+    clearInterval(interval);
+  }
+  if (socket) {
+    socket.sendPresenceUpdate("paused", jid).catch(() => {});
+  }
+}
+
 // Inject message to WOPR
 async function injectMessage(waMsg: WhatsAppMessage, sessionKey: string): Promise<void> {
   if (!ctx || !waMsg.text) return;
-  
+
   const prefix = `[${waMsg.sender || "WhatsApp User"}]: `;
   const messageWithPrefix = prefix + waMsg.text;
-  
+
   const channelInfo: ChannelInfo = {
     type: "whatsapp",
     id: waMsg.from,
     name: waMsg.groupName || (waMsg.isGroup ? "Group" : "WhatsApp DM"),
   };
-  
-  const response = await ctx.inject(sessionKey, messageWithPrefix, {
-    from: waMsg.sender || waMsg.from,
-    channel: channelInfo,
-    onStream: (msg: StreamMessage) => handleStreamChunk(msg, waMsg),
-  });
-  
-  // Send final response
-  await sendMessageInternal(waMsg.from, response);
+
+  // Show typing indicator while processing
+  const typingInterval = startTypingIndicator(waMsg.from);
+
+  try {
+    const response = await ctx.inject(sessionKey, messageWithPrefix, {
+      from: waMsg.sender || waMsg.from,
+      channel: channelInfo,
+      onStream: (msg: StreamMessage) => handleStreamChunk(msg, waMsg),
+    });
+
+    // Send final response
+    await sendMessageInternal(waMsg.from, response);
+  } finally {
+    stopTypingIndicator(waMsg.from, typingInterval);
+  }
 }
 
 // Handle streaming response chunks
