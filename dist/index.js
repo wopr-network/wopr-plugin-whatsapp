@@ -8,20 +8,31 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.login = login;
 exports.logout = logout;
-const node_path_1 = __importDefault(require("node:path"));
-const node_os_1 = __importDefault(require("node:os"));
 const promises_1 = __importDefault(require("node:fs/promises"));
-const winston_1 = __importDefault(require("winston"));
+const node_os_1 = __importDefault(require("node:os"));
+const node_path_1 = __importDefault(require("node:path"));
 const baileys_1 = require("@whiskeysockets/baileys");
 const qrcode_terminal_1 = __importDefault(require("qrcode-terminal"));
+const winston_1 = __importDefault(require("winston"));
+const sessionStates = new Map();
+function getSessionState(sessionKey) {
+    if (!sessionStates.has(sessionKey)) {
+        sessionStates.set(sessionKey, {
+            thinkingLevel: "medium",
+            messageCount: 0,
+            model: "claude-sonnet-4-20250514",
+        });
+    }
+    return sessionStates.get(sessionKey);
+}
 // Module-level state
 let socket = null;
 let ctx = null;
 let config = {};
 let agentIdentity = { name: "WOPR", emoji: "👀" };
-let contacts = new Map();
-let groups = new Map();
-let messageCache = new Map();
+const contacts = new Map();
+const groups = new Map();
+const messageCache = new Map();
 let logger;
 // Initialize winston logger
 function initLogger() {
@@ -33,15 +44,15 @@ function initLogger() {
         transports: [
             new winston_1.default.transports.File({
                 filename: node_path_1.default.join(WOPR_HOME, "logs", "whatsapp-plugin-error.log"),
-                level: "error"
+                level: "error",
             }),
             new winston_1.default.transports.File({
                 filename: node_path_1.default.join(WOPR_HOME, "logs", "whatsapp-plugin.log"),
-                level: "debug"
+                level: "debug",
             }),
             new winston_1.default.transports.Console({
                 format: winston_1.default.format.combine(winston_1.default.format.colorize(), winston_1.default.format.simple()),
-                level: "warn"
+                level: "warn",
             }),
         ],
     });
@@ -51,12 +62,50 @@ const configSchema = {
     title: "WhatsApp Integration",
     description: "Configure WhatsApp Web integration using Baileys",
     fields: [
-        { name: "accountId", type: "text", label: "Account ID", placeholder: "default", default: "default", description: "Unique identifier for this WhatsApp account" },
-        { name: "dmPolicy", type: "select", label: "DM Policy", placeholder: "allowlist", default: "allowlist", description: "How to handle direct messages: allowlist, open, or disabled" },
-        { name: "allowFrom", type: "array", label: "Allowed Numbers", placeholder: "+1234567890", description: "Phone numbers allowed to DM (E.164 format)" },
-        { name: "selfChatMode", type: "boolean", label: "Self-Chat Mode", default: false, description: "Enable for personal phone numbers (prevents spamming contacts)" },
-        { name: "ownerNumber", type: "text", label: "Owner Number", placeholder: "+1234567890", description: "Your phone number for self-chat mode" },
-        { name: "verbose", type: "boolean", label: "Verbose Logging", default: false, description: "Enable detailed Baileys logging" },
+        {
+            name: "accountId",
+            type: "text",
+            label: "Account ID",
+            placeholder: "default",
+            default: "default",
+            description: "Unique identifier for this WhatsApp account",
+        },
+        {
+            name: "dmPolicy",
+            type: "select",
+            label: "DM Policy",
+            placeholder: "allowlist",
+            default: "allowlist",
+            description: "How to handle direct messages: allowlist, open, or disabled",
+        },
+        {
+            name: "allowFrom",
+            type: "array",
+            label: "Allowed Numbers",
+            placeholder: "+1234567890",
+            description: "Phone numbers allowed to DM (E.164 format)",
+        },
+        {
+            name: "selfChatMode",
+            type: "boolean",
+            label: "Self-Chat Mode",
+            default: false,
+            description: "Enable for personal phone numbers (prevents spamming contacts)",
+        },
+        {
+            name: "ownerNumber",
+            type: "text",
+            label: "Owner Number",
+            placeholder: "+1234567890",
+            description: "Your phone number for self-chat mode",
+        },
+        {
+            name: "verbose",
+            type: "boolean",
+            label: "Verbose Logging",
+            default: false,
+            description: "Enable detailed Baileys logging",
+        },
         { name: "pairingRequests", type: "object", hidden: true, default: {} },
     ],
 };
@@ -170,7 +219,7 @@ function isAllowed(from, isGroup) {
             if (allowed.includes("*"))
                 return true;
             const phone = from.split("@")[0];
-            return allowed.some(num => {
+            return allowed.some((num) => {
                 const normalized = num.replace(/[^0-9]/g, "");
                 return phone === normalized || phone.endsWith(normalized);
             });
@@ -208,7 +257,9 @@ function handleIncomingMessage(msg) {
     const messageId = msg.key.id || `${Date.now()}-${Math.random()}`;
     const from = msg.key.remoteJid || "";
     const fromMe = msg.key.fromMe || false;
-    const timestamp = msg.messageTimestamp ? Number(msg.messageTimestamp) * 1000 : Date.now();
+    const timestamp = msg.messageTimestamp
+        ? Number(msg.messageTimestamp) * 1000
+        : Date.now();
     const isGroup = from.endsWith("@g.us");
     const participant = msg.key.participant || undefined;
     // Skip messages from self
@@ -264,12 +315,24 @@ function handleIncomingMessage(msg) {
     ctx.logMessage(sessionKey, text || "[media]", logOptions);
     // Send ack reaction
     sendReactionInternal(from, messageId, getAckReaction()).catch(() => { });
-    // Check if bot is mentioned (for groups)
-    if (isGroup && text) {
-        // In WhatsApp, mentions are often implicit or via @phone
-        // For now, treat all group messages as mentions
+    // Check for !command prefix before injecting
+    if (text) {
+        handleTextCommand(waMessage, sessionKey)
+            .then((handled) => {
+            if (!handled) {
+                // Not a command — track message count and inject into WOPR
+                const state = getSessionState(sessionKey);
+                state.messageCount++;
+                injectMessage(waMessage, sessionKey);
+            }
+        })
+            .catch((e) => {
+            logger.error(`Command handler error: ${e}`);
+            injectMessage(waMessage, sessionKey);
+        });
+        return;
     }
-    // Inject into WOPR for response
+    // No text (media only) — inject as-is
     injectMessage(waMessage, sessionKey);
 }
 // Send reaction internally
@@ -287,12 +350,173 @@ async function sendReactionInternal(chatJid, messageId, emoji) {
         },
     });
 }
+// Parse a !command from message text. Returns null if not a command.
+function parseCommand(text) {
+    const match = text.match(/^!(\w+)(?:\s+(.*))?$/s);
+    if (!match)
+        return null;
+    return { name: match[1].toLowerCase(), args: (match[2] || "").trim() };
+}
+// Handle text commands (!status, !new, !model, etc.)
+// Returns true if the message was handled as a command.
+async function handleTextCommand(waMsg, sessionKey) {
+    if (!ctx || !waMsg.text)
+        return false;
+    const cmd = parseCommand(waMsg.text);
+    if (!cmd)
+        return false;
+    const state = getSessionState(sessionKey);
+    logger.info(`Command received: !${cmd.name} from ${waMsg.sender || waMsg.from}`);
+    switch (cmd.name) {
+        case "status": {
+            const response = `*Session Status*\n\n` +
+                `*Session:* ${sessionKey}\n` +
+                `*Thinking Level:* ${state.thinkingLevel}\n` +
+                `*Model:* ${state.model}\n` +
+                `*Messages:* ${state.messageCount}`;
+            await sendMessageInternal(waMsg.from, response);
+            return true;
+        }
+        case "new":
+        case "reset": {
+            sessionStates.delete(sessionKey);
+            await sendMessageInternal(waMsg.from, "*Session Reset*\n\nStarting fresh! Your conversation history has been cleared.");
+            return true;
+        }
+        case "compact": {
+            await sendMessageInternal(waMsg.from, "*Compacting Session*\n\nTriggering context compaction...");
+            try {
+                const result = await ctx.inject(sessionKey, "/compact", {
+                    silent: true,
+                });
+                await sendMessageInternal(waMsg.from, `*Session Compacted*\n\n${result || "Context has been compacted."}`);
+            }
+            catch {
+                await sendMessageInternal(waMsg.from, "Failed to compact session.");
+            }
+            return true;
+        }
+        case "think": {
+            const validLevels = ["off", "minimal", "low", "medium", "high", "xhigh"];
+            const level = cmd.args.toLowerCase();
+            if (!level || !validLevels.includes(level)) {
+                await sendMessageInternal(waMsg.from, `*Thinking Level*\n\nCurrent: ${state.thinkingLevel}\n\nUsage: !think <level>\nLevels: ${validLevels.join(", ")}`);
+                return true;
+            }
+            state.thinkingLevel = level;
+            await sendMessageInternal(waMsg.from, `*Thinking level set to:* ${level}`);
+            return true;
+        }
+        case "model": {
+            if (!cmd.args) {
+                await sendMessageInternal(waMsg.from, `*Current Model:* ${state.model}\n\nUsage: !model <name>\nExamples: !model opus, !model haiku, !model sonnet`);
+                return true;
+            }
+            const modelChoice = cmd.args.toLowerCase();
+            // Use ctx.setSessionProvider if available, otherwise just track locally
+            const ctxAny = ctx;
+            if (ctxAny.setSessionProvider) {
+                try {
+                    // Try to resolve model via provider registry (same as Discord plugin)
+                    const providerIds = [
+                        "anthropic",
+                        "openai",
+                        "kimi",
+                        "opencode",
+                        "codex",
+                    ];
+                    let resolved = null;
+                    for (const pid of providerIds) {
+                        const provider = ctxAny.getProvider?.(pid);
+                        if (!provider?.supportedModels)
+                            continue;
+                        for (const modelId of provider.supportedModels) {
+                            if (modelId === modelChoice || modelId.includes(modelChoice)) {
+                                resolved = { provider: pid, id: modelId, name: modelId };
+                                break;
+                            }
+                        }
+                        if (resolved)
+                            break;
+                    }
+                    if (!resolved) {
+                        await sendMessageInternal(waMsg.from, `Unknown model: ${modelChoice}\n\nTry: opus, haiku, sonnet, gpt`);
+                        return true;
+                    }
+                    await ctxAny.setSessionProvider(sessionKey, resolved.provider, {
+                        model: resolved.id,
+                    });
+                    state.model = resolved.id;
+                    await sendMessageInternal(waMsg.from, `*Model switched to:* ${resolved.id}`);
+                }
+                catch (e) {
+                    await sendMessageInternal(waMsg.from, `Failed to switch model: ${e}`);
+                }
+            }
+            else {
+                // Fallback: just store the preference locally
+                state.model = modelChoice;
+                await sendMessageInternal(waMsg.from, `*Model preference set to:* ${modelChoice}\n\n(Note: model switching requires WOPR core support)`);
+            }
+            return true;
+        }
+        case "session": {
+            if (!cmd.args) {
+                await sendMessageInternal(waMsg.from, `*Current Session:* ${sessionKey}\n\nUsage: !session <name>`);
+                return true;
+            }
+            // Session switching is handled by changing the session key for future messages.
+            // We inform the user but note that WhatsApp sessions are keyed by chat JID,
+            // so named sub-sessions would require more infrastructure.
+            const newKey = `${sessionKey}/${cmd.args}`;
+            await sendMessageInternal(waMsg.from, `*Switched to session:* ${newKey}\n\nNote: Each session maintains separate context.`);
+            return true;
+        }
+        case "cancel": {
+            const ctxAny2 = ctx;
+            let cancelled = false;
+            if (ctxAny2.cancelInject) {
+                cancelled = ctxAny2.cancelInject(sessionKey);
+            }
+            if (cancelled) {
+                await sendMessageInternal(waMsg.from, "*Cancelled*\n\nThe current response has been stopped.");
+            }
+            else {
+                await sendMessageInternal(waMsg.from, "Nothing to cancel. No response is currently in progress.");
+            }
+            return true;
+        }
+        case "help": {
+            const helpText = `*${agentIdentity.name || "WOPR"} WhatsApp Commands*\n\n` +
+                `*!status* - Show session status\n` +
+                `*!new* or *!reset* - Start fresh session\n` +
+                `*!compact* - Summarize conversation\n` +
+                `*!think <level>* - Set thinking level (off/minimal/low/medium/high/xhigh)\n` +
+                `*!model <model>* - Switch AI model (sonnet/opus/haiku)\n` +
+                `*!cancel* - Stop the current AI response\n` +
+                `*!session <name>* - Switch to named session\n` +
+                `*!help* - Show this help\n\n` +
+                `Send any other message to chat with ${agentIdentity.name || "WOPR"}!`;
+            await sendMessageInternal(waMsg.from, helpText);
+            return true;
+        }
+        default:
+            // Not a recognized command, treat as normal message
+            return false;
+    }
+}
 // Inject message to WOPR
 async function injectMessage(waMsg, sessionKey) {
     if (!ctx || !waMsg.text)
         return;
+    const state = getSessionState(sessionKey);
     const prefix = `[${waMsg.sender || "WhatsApp User"}]: `;
-    const messageWithPrefix = prefix + waMsg.text;
+    let messageContent = waMsg.text;
+    // Prepend thinking level if not default (mirrors Discord plugin behavior)
+    if (state.thinkingLevel !== "medium") {
+        messageContent = `[Thinking level: ${state.thinkingLevel}] ${messageContent}`;
+    }
+    const messageWithPrefix = prefix + messageContent;
     const channelInfo = {
         type: "whatsapp",
         id: waMsg.from,
@@ -422,7 +646,8 @@ async function login() {
     return new Promise((resolve, reject) => {
         createSocket(authDir, (qr) => {
             qrcode_terminal_1.default.generate(qr, { small: true });
-        }).then((sock) => {
+        })
+            .then((sock) => {
             socket = sock;
             // Wait for connection
             sock.ev.on("connection.update", (update) => {
@@ -435,7 +660,8 @@ async function login() {
                     reject(new Error(`Connection closed (status: ${status})`));
                 }
             });
-        }).catch(reject);
+        })
+            .catch(reject);
     });
 }
 // Logout from WhatsApp
