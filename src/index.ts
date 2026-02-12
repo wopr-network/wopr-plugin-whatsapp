@@ -67,6 +67,15 @@ let groups: Map<string, GroupMetadata> = new Map();
 let messageCache: Map<string, WhatsAppMessage> = new Map();
 let logger: winston.Logger;
 
+// Typing indicator refresh interval (composing status expires after ~10s in WhatsApp)
+const TYPING_REFRESH_MS = 5000;
+
+// Active typing intervals tracked for cleanup during shutdown/logout
+const activeTypingIntervals: Set<NodeJS.Timeout> = new Set();
+
+// Ref-counting per jid to handle concurrent typing indicators
+const typingRefCounts: Map<string, { count: number; interval: NodeJS.Timeout }> = new Map();
+
 // Initialize winston logger
 function initLogger(): winston.Logger {
   const WOPR_HOME = process.env.WOPR_HOME || path.join(process.env.HOME || "~", ".wopr");
@@ -354,27 +363,92 @@ async function sendReactionInternal(chatJid: string, messageId: string, emoji: s
   });
 }
 
+// Start typing indicator with auto-refresh and ref-counting
+function startTypingIndicator(jid: string): void {
+  const existing = typingRefCounts.get(jid);
+  if (existing) {
+    existing.count++;
+    return;
+  }
+
+  if (!socket) return;
+
+  const sock = socket;
+  // Send initial composing presence
+  sock.sendPresenceUpdate("composing", jid).catch(() => {});
+
+  // Refresh every TYPING_REFRESH_MS since WhatsApp composing status expires
+  const interval = setInterval(() => {
+    // Guard against stale socket reference
+    if (socket !== sock) {
+      clearInterval(interval);
+      activeTypingIntervals.delete(interval);
+      typingRefCounts.delete(jid);
+      return;
+    }
+    sock.sendPresenceUpdate("composing", jid).catch(() => {});
+  }, TYPING_REFRESH_MS);
+  interval.unref();
+
+  activeTypingIntervals.add(interval);
+  typingRefCounts.set(jid, { count: 1, interval });
+}
+
+// Stop typing indicator with ref-counting
+function stopTypingIndicator(jid: string): void {
+  const existing = typingRefCounts.get(jid);
+  if (!existing) return;
+
+  existing.count--;
+  if (existing.count > 0) return;
+
+  // Last reference — actually stop
+  clearInterval(existing.interval);
+  activeTypingIntervals.delete(existing.interval);
+  typingRefCounts.delete(jid);
+
+  if (socket) {
+    socket.sendPresenceUpdate("paused", jid).catch(() => {});
+  }
+}
+
+// Clear all active typing intervals (for shutdown/logout)
+function clearAllTypingIntervals(): void {
+  for (const interval of activeTypingIntervals) {
+    clearInterval(interval);
+  }
+  activeTypingIntervals.clear();
+  typingRefCounts.clear();
+}
+
 // Inject message to WOPR
 async function injectMessage(waMsg: WhatsAppMessage, sessionKey: string): Promise<void> {
   if (!ctx || !waMsg.text) return;
-  
+
   const prefix = `[${waMsg.sender || "WhatsApp User"}]: `;
   const messageWithPrefix = prefix + waMsg.text;
-  
+
   const channelInfo: ChannelInfo = {
     type: "whatsapp",
     id: waMsg.from,
     name: waMsg.groupName || (waMsg.isGroup ? "Group" : "WhatsApp DM"),
   };
-  
-  const response = await ctx.inject(sessionKey, messageWithPrefix, {
-    from: waMsg.sender || waMsg.from,
-    channel: channelInfo,
-    onStream: (msg: StreamMessage) => handleStreamChunk(msg, waMsg),
-  });
-  
-  // Send final response
-  await sendMessageInternal(waMsg.from, response);
+
+  // Show typing indicator while processing (ref-counted per jid)
+  startTypingIndicator(waMsg.from);
+
+  try {
+    const response = await ctx.inject(sessionKey, messageWithPrefix, {
+      from: waMsg.sender || waMsg.from,
+      channel: channelInfo,
+      onStream: (msg: StreamMessage) => handleStreamChunk(msg, waMsg),
+    });
+
+    // Send final response
+    await sendMessageInternal(waMsg.from, response);
+  } finally {
+    stopTypingIndicator(waMsg.from);
+  }
 }
 
 // Handle streaming response chunks
@@ -464,6 +538,7 @@ async function createSocket(authDir: string, onQr?: (qr: string) => void): Promi
       if (status === DisconnectReason.loggedOut) {
         logger.error("WhatsApp session logged out. Run: wopr channels login whatsapp");
       }
+      clearAllTypingIntervals();
       socket = null;
     }
     
@@ -536,7 +611,9 @@ export async function login(): Promise<void> {
 // Logout from WhatsApp
 export async function logout(): Promise<void> {
   const accountId = config.accountId || "default";
-  
+
+  clearAllTypingIntervals();
+
   if (socket) {
     await socket.logout();
     socket = null;
@@ -594,6 +671,7 @@ const plugin: WOPRPlugin = {
   },
   
   async shutdown(): Promise<void> {
+    clearAllTypingIntervals();
     if (socket) {
       await socket.logout();
       socket = null;
