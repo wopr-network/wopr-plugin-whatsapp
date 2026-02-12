@@ -130,9 +130,6 @@ const ATTACHMENTS_DIR = path.join(WOPR_HOME, "attachments", "whatsapp");
 // Maximum download size (default 100 MB, configurable via env)
 const MAX_MEDIA_BYTES = Number(process.env.WOPR_WA_MAX_MEDIA_BYTES) || 100 * 1024 * 1024;
 
-// Allowed MIME-type prefixes for outbound media
-const ALLOWED_MIME_PREFIXES = ["image/", "audio/", "video/", "application/pdf", "application/octet-stream"];
-
 /** Return true if `filePath` resolves inside `allowedDir` (realpath check). */
 async function isInsideDir(filePath: string, allowedDir: string): Promise<boolean> {
   try {
@@ -404,10 +401,40 @@ function getMediaType(msg: WAMessage): (typeof MEDIA_MESSAGE_TYPES)[number] | nu
   return null;
 }
 
+// Extract declared file size from WhatsApp message metadata (before downloading)
+function getMediaFileLength(msg: WAMessage): number | null {
+  const content = msg.message;
+  if (!content) return null;
+
+  const sub =
+    content.imageMessage ||
+    content.videoMessage ||
+    content.audioMessage ||
+    content.documentMessage ||
+    content.stickerMessage;
+  if (!sub) return null;
+
+  const len = (sub as Record<string, unknown>).fileLength;
+  if (typeof len === "number" && len > 0) return len;
+  if (typeof len === "string" && Number(len) > 0) return Number(len);
+  // Baileys may expose fileLength as Long
+  if (len && typeof (len as { toNumber?: () => number }).toNumber === "function") {
+    return (len as { toNumber: () => number }).toNumber();
+  }
+  return null;
+}
+
 // Download media from a WhatsApp message and save to disk
 // Returns the file path on success, or null on failure
 async function downloadWhatsAppMedia(msg: WAMessage): Promise<string | null> {
   try {
+    // Pre-download size check from message metadata
+    const declaredSize = getMediaFileLength(msg);
+    if (declaredSize !== null && declaredSize > MAX_MEDIA_BYTES) {
+      logger.warn(`Media too large per metadata (${declaredSize} bytes, limit ${MAX_MEDIA_BYTES}), skipping download`);
+      return null;
+    }
+
     await ensureAttachmentsDir();
 
     const ext = sanitizeFilename(extensionForMediaMessage(msg.message!) || "bin");
@@ -419,9 +446,9 @@ async function downloadWhatsAppMedia(msg: WAMessage): Promise<string | null> {
 
     const buffer = await downloadMediaMessage(msg, "buffer", {});
 
-    // Enforce file size limit
+    // Post-download safety net: verify actual size
     if (buffer.length > MAX_MEDIA_BYTES) {
-      logger.warn(`Media too large (${buffer.length} bytes, limit ${MAX_MEDIA_BYTES}), skipping`);
+      logger.warn(`Media too large after download (${buffer.length} bytes, limit ${MAX_MEDIA_BYTES}), skipping`);
       return null;
     }
 
