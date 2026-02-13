@@ -810,9 +810,10 @@ async function handleTextCommand(
 				await sendMessageInternal(
 					waMsg.from,
 					`*Session Compacted*\n\n${result || "Context has been compacted."}`,
+					rawMsg,
 				);
 			} catch {
-				await sendMessageInternal(waMsg.from, "Failed to compact session.");
+				await sendMessageInternal(waMsg.from, "Failed to compact session.", rawMsg);
 			}
 			return true;
 		}

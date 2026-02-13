@@ -464,9 +464,6 @@ describe("reply-to-message support (WOP-135)", () => {
     (fsMod.default.access as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
     (fsMod.default.mkdir as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
 
-    // Mock require("node:fs") for sync ops in maybeRestoreCredsFromBackup
-    const origRequire = globalThis.require;
-
     // Configure inject to return a test response
     mockInject = vi.fn().mockResolvedValue("Test bot response");
 
@@ -490,8 +487,8 @@ describe("reply-to-message support (WOP-135)", () => {
   });
 
   it("passes quoted WAMessage when sending bot response to a DM", async () => {
-    // Skip if messages.upsert handler wasn't registered (socket not connected)
-    if (!eventHandlers["messages.upsert"]) return;
+    // Ensure messages.upsert handler was registered (socket must be connected)
+    expect(eventHandlers["messages.upsert"]).toBeDefined();
 
     const incomingMsg = {
       key: {
@@ -655,10 +652,11 @@ describe("reply-to-message support (WOP-135)", () => {
   });
 
   it("only quotes the first chunk of a multi-chunk message", async () => {
-    if (!eventHandlers["messages.upsert"]) return;
+    // Ensure messages.upsert handler was registered (socket must be connected)
+    expect(eventHandlers["messages.upsert"]).toBeDefined();
 
-    // Make inject return a very long response to trigger chunking
-    const longResponse = Array(50).fill("This is a test sentence.").join(" ");
+    // Make inject return a very long response to trigger chunking (>4000 chars)
+    const longResponse = Array(200).fill("This is a test sentence that needs to be long enough to exceed the chunk threshold.").join(" ");
     mockInject.mockResolvedValue(longResponse);
 
     const incomingMsg = {
@@ -685,16 +683,17 @@ describe("reply-to-message support (WOP-135)", () => {
       }
     );
 
-    if (textCalls.length > 1) {
-      // First chunk should have the quote
-      expect(textCalls[0][2]).toBeDefined();
-      expect(textCalls[0][2].quoted).toBeDefined();
+    // Must have multiple chunks since response exceeds 4000 chars
+    expect(textCalls.length).toBeGreaterThan(1);
 
-      // Subsequent chunks should NOT have the quote
-      for (let i = 1; i < textCalls.length; i++) {
-        const opts = textCalls[i][2];
-        expect(!opts || !opts.quoted).toBe(true);
-      }
+    // First chunk should have the quote
+    expect(textCalls[0][2]).toBeDefined();
+    expect(textCalls[0][2].quoted).toBeDefined();
+
+    // Subsequent chunks should NOT have the quote
+    for (let i = 1; i < textCalls.length; i++) {
+      const opts = textCalls[i][2];
+      expect(!opts || !opts.quoted).toBe(true);
     }
   });
 });
