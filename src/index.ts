@@ -40,6 +40,7 @@ import type {
 } from "./types.js";
 import { type RetryConfig, DEFAULT_RETRY_CONFIG, withRetry } from "./retry.js";
 import { ReactionStateMachine, DEFAULT_REACTION_EMOJIS } from "./reactions.js";
+import { StreamManager } from "./streaming.js";
 
 // Media types that WhatsApp supports for incoming messages
 const MEDIA_MESSAGE_TYPES = [
@@ -121,6 +122,9 @@ const groups: Map<string, GroupMetadata> = new Map();
 const messageCache: Map<string, WhatsAppMessage> = new Map();
 const sessionOverrides: Map<string, string> = new Map();
 let logger: winston.Logger;
+
+// Stream manager for active streaming sessions
+const streamManager = new StreamManager();
 
 // Typing indicator refresh interval (composing status expires after ~10s in WhatsApp)
 const TYPING_REFRESH_MS = 5000;
@@ -591,6 +595,12 @@ async function handleIncomingMessage(msg: WAMessage): Promise<void> {
 	if (!isAllowed(from, isGroup)) {
 		logger.info(`Message from ${from} blocked by DM policy`);
 		return;
+	}
+
+	// Interrupt any active stream for this chat (user sent a new message mid-stream)
+	const jid = toJid(from);
+	if (streamManager.interrupt(jid)) {
+		logger.info(`Stream interrupted by new message from ${from}`);
 	}
 
 	const text = extractText(msg);
@@ -1067,7 +1077,7 @@ async function injectMessage(
 	reactionSM?: ReactionStateMachine,
 	rawMsg?: WAMessage,
 ): Promise<void> {
-	if (!ctx) return;
+	if (!ctx || !socket) return;
 
 	const state = getSessionState(sessionKey);
 	const prefix = `[${waMsg.sender || "WhatsApp User"}]: `;
@@ -1102,10 +1112,15 @@ async function injectMessage(
 		images.push(waMsg.mediaPath);
 	}
 
+	const jid = toJid(waMsg.from);
+
+	// Create a new stream for this chat (interrupts any existing stream)
+	const stream = streamManager.create(jid, socket, logger);
+
 	const injectOptions: PluginInjectOptions = {
 		from: waMsg.sender || waMsg.from,
 		channel: channelInfo,
-		onStream: (msg: StreamMessage) => handleStreamChunk(msg, waMsg),
+		onStream: (msg: StreamMessage) => handleStreamChunk(msg, jid),
 		...(images.length > 0 ? { images } : {}),
 	};
 
@@ -1120,8 +1135,13 @@ async function injectMessage(
 	try {
 		const response = await ctx.inject(sessionKey, messageWithPrefix, injectOptions);
 
-		// Send final response, quoting the original message for threading context
-		await sendResponse(waMsg.from, response, rawMsg);
+		// Finalize the stream — returns true if content was streamed progressively
+		const didStream = await streamManager.finalize(jid);
+
+		// Only send the full response if streaming did not deliver it
+		if (!didStream) {
+			await sendResponse(waMsg.from, response, rawMsg);
+		}
 
 		// Transition to done — processing complete
 		if (reactionSM) {
@@ -1134,17 +1154,36 @@ async function injectMessage(
 		}
 		throw err;
 	} finally {
+		// Clean up stream timer if inject threw before finalize ran
+		streamManager.interrupt(jid);
 		stopTypingIndicator(waMsg.from);
 	}
 }
 
 // Handle streaming response chunks
-async function handleStreamChunk(
+function handleStreamChunk(
 	msg: StreamMessage,
-	waMsg: WhatsAppMessage,
-): Promise<void> {
-	// For WhatsApp, we accumulate and send at the end
-	// Could implement chunked sending for long messages
+	jid: string,
+): void {
+	const stream = streamManager.get(jid);
+	if (!stream) return;
+
+	// Extract text content from various message formats
+	let textContent = "";
+	if (msg.type === "text" && msg.content) {
+		textContent = msg.content;
+	} else if ((msg as any).type === "assistant" && (msg as any).message?.content) {
+		const content = (msg as any).message.content;
+		if (Array.isArray(content)) {
+			textContent = content.map((c: any) => c.text || "").join("");
+		} else if (typeof content === "string") {
+			textContent = content;
+		}
+	}
+
+	if (textContent) {
+		stream.append(textContent);
+	}
 }
 
 // Send a text message to WhatsApp, optionally quoting the triggering message (with retry)
@@ -1535,6 +1574,7 @@ const plugin: WOPRPlugin = {
 	},
 
 	async shutdown(): Promise<void> {
+		streamManager.cancelAll();
 		clearAllTypingIntervals();
 		if (ctx?.unregisterChannelProvider) {
 			ctx.unregisterChannelProvider("whatsapp");
