@@ -624,7 +624,7 @@ async function handleIncomingMessage(msg: WAMessage): Promise<void> {
 		} else {
 			// Notify user that media could not be processed
 			try {
-				await sendMessageInternal(from, "Sorry, I could not process that media file.");
+				await sendMessageInternal(from, "Sorry, I could not process that media file.", msg);
 			} catch (notifyErr) {
 				logger.error(`Failed to send media error notification: ${String(notifyErr)}`);
 			}
@@ -680,7 +680,7 @@ async function handleIncomingMessage(msg: WAMessage): Promise<void> {
 	// Check for !command prefix before injecting
 	if (text) {
 		try {
-			const handled = await handleTextCommand(waMessage, sessionKey);
+			const handled = await handleTextCommand(waMessage, sessionKey, msg);
 			if (handled) {
 				// Command was handled directly — mark done
 				await reactionSM.transition("active");
@@ -692,11 +692,11 @@ async function handleIncomingMessage(msg: WAMessage): Promise<void> {
 				// Not a command — track message count and inject into WOPR
 				const state = getSessionState(sessionKey);
 				state.messageCount++;
-				await injectMessage(waMessage, sessionKey, reactionSM);
+				await injectMessage(waMessage, sessionKey, reactionSM, msg);
 			}
 		} catch (e) {
 			logger.error(`Command handler error: ${e}`);
-			await injectMessage(waMessage, sessionKey, reactionSM);
+			await injectMessage(waMessage, sessionKey, reactionSM, msg);
 		}
 		return;
 	}
@@ -710,7 +710,7 @@ async function handleIncomingMessage(msg: WAMessage): Promise<void> {
 
 	// Media only — inject into WOPR, then clean up temp media
 	try {
-		await injectMessage(waMessage, sessionKey, reactionSM);
+		await injectMessage(waMessage, sessionKey, reactionSM, msg);
 	} finally {
 		// Clean up downloaded media after processing
 		if (mediaPath) {
@@ -761,6 +761,7 @@ export function parseCommand(text: string): { name: string; args: string } | nul
 async function handleTextCommand(
 	waMsg: WhatsAppMessage,
 	sessionKey: string,
+	rawMsg?: WAMessage,
 ): Promise<boolean> {
 	if (!ctx || !waMsg.text) return false;
 
@@ -781,7 +782,7 @@ async function handleTextCommand(
 				`*Thinking Level:* ${state.thinkingLevel}\n` +
 				`*Model:* ${state.model}\n` +
 				`*Messages:* ${state.messageCount}`;
-			await sendMessageInternal(waMsg.from, response);
+			await sendMessageInternal(waMsg.from, response, rawMsg);
 			return true;
 		}
 
@@ -791,6 +792,7 @@ async function handleTextCommand(
 			await sendMessageInternal(
 				waMsg.from,
 				"*Session Reset*\n\nLocal session state (thinking level, model preference, message count) has been cleared. Note: WOPR core conversation context is not affected.",
+				rawMsg,
 			);
 			return true;
 		}
@@ -799,6 +801,7 @@ async function handleTextCommand(
 			await sendMessageInternal(
 				waMsg.from,
 				"*Compacting Session*\n\nTriggering context compaction...",
+				rawMsg,
 			);
 			try {
 				const result = await ctx.inject(sessionKey, "/compact", {
@@ -807,9 +810,10 @@ async function handleTextCommand(
 				await sendMessageInternal(
 					waMsg.from,
 					`*Session Compacted*\n\n${result || "Context has been compacted."}`,
+					rawMsg,
 				);
 			} catch {
-				await sendMessageInternal(waMsg.from, "Failed to compact session.");
+				await sendMessageInternal(waMsg.from, "Failed to compact session.", rawMsg);
 			}
 			return true;
 		}
@@ -821,6 +825,7 @@ async function handleTextCommand(
 				await sendMessageInternal(
 					waMsg.from,
 					`*Thinking Level*\n\nCurrent: ${state.thinkingLevel}\n\nUsage: !think <level>\nLevels: ${validLevels.join(", ")}`,
+					rawMsg,
 				);
 				return true;
 			}
@@ -828,6 +833,7 @@ async function handleTextCommand(
 			await sendMessageInternal(
 				waMsg.from,
 				`*Thinking level set to:* ${level}`,
+				rawMsg,
 			);
 			return true;
 		}
@@ -837,6 +843,7 @@ async function handleTextCommand(
 				await sendMessageInternal(
 					waMsg.from,
 					`*Current Model:* ${state.model}\n\nUsage: !model <name>\nExamples: !model opus, !model haiku, !model sonnet`,
+					rawMsg,
 				);
 				return true;
 			}
@@ -873,6 +880,7 @@ async function handleTextCommand(
 						await sendMessageInternal(
 							waMsg.from,
 							`Unknown model: ${modelChoice}\n\nTry: opus, haiku, sonnet, gpt`,
+							rawMsg,
 						);
 						return true;
 					}
@@ -883,9 +891,10 @@ async function handleTextCommand(
 					await sendMessageInternal(
 						waMsg.from,
 						`*Model switched to:* ${resolved.id}`,
+						rawMsg,
 					);
 				} catch (e) {
-					await sendMessageInternal(waMsg.from, `Failed to switch model: ${e}`);
+					await sendMessageInternal(waMsg.from, `Failed to switch model: ${e}`, rawMsg);
 				}
 			} else {
 				// Fallback: just store the preference locally
@@ -893,6 +902,7 @@ async function handleTextCommand(
 				await sendMessageInternal(
 					waMsg.from,
 					`*Model preference set to:* ${modelChoice}\n\n(Note: model switching requires WOPR core support)`,
+					rawMsg,
 				);
 			}
 			return true;
@@ -904,6 +914,7 @@ async function handleTextCommand(
 				await sendMessageInternal(
 					waMsg.from,
 					`*Current Session:* ${sessionKey}\n\nUsage: !session <name>\nUse !session default to reset to the default session.`,
+					rawMsg,
 				);
 				return true;
 			}
@@ -912,6 +923,7 @@ async function handleTextCommand(
 				await sendMessageInternal(
 					waMsg.from,
 					`*Session reset to default:* ${defaultKey}`,
+					rawMsg,
 				);
 			} else {
 				const newKey = `${defaultKey}/${cmd.args}`;
@@ -919,6 +931,7 @@ async function handleTextCommand(
 				await sendMessageInternal(
 					waMsg.from,
 					`*Switched to session:* ${newKey}\n\nNote: Each session maintains separate context. Use !session default to switch back.`,
+					rawMsg,
 				);
 			}
 			return true;
@@ -938,11 +951,13 @@ async function handleTextCommand(
 				await sendMessageInternal(
 					waMsg.from,
 					"*Cancelled*\n\nThe current response has been stopped.",
+					rawMsg,
 				);
 			} else {
 				await sendMessageInternal(
 					waMsg.from,
 					"Nothing to cancel. No response is currently in progress.",
+					rawMsg,
 				);
 			}
 			return true;
@@ -960,7 +975,7 @@ async function handleTextCommand(
 				`*!session <name>* - Switch to named session\n` +
 				`*!help* - Show this help\n\n` +
 				`Send any other message to chat with ${agentIdentity.name || "WOPR"}!`;
-			await sendMessageInternal(waMsg.from, helpText);
+			await sendMessageInternal(waMsg.from, helpText, rawMsg);
 			return true;
 		}
 
@@ -1050,6 +1065,7 @@ async function injectMessage(
 	waMsg: WhatsAppMessage,
 	sessionKey: string,
 	reactionSM?: ReactionStateMachine,
+	rawMsg?: WAMessage,
 ): Promise<void> {
 	if (!ctx) return;
 
@@ -1104,8 +1120,8 @@ async function injectMessage(
 	try {
 		const response = await ctx.inject(sessionKey, messageWithPrefix, injectOptions);
 
-		// Send final response
-		await sendResponse(waMsg.from, response);
+		// Send final response, quoting the original message for threading context
+		await sendResponse(waMsg.from, response, rawMsg);
 
 		// Transition to done — processing complete
 		if (reactionSM) {
@@ -1131,8 +1147,8 @@ async function handleStreamChunk(
 	// Could implement chunked sending for long messages
 }
 
-// Send a text message to WhatsApp (with retry)
-async function sendMessageInternal(to: string, text: string): Promise<void> {
+// Send a text message to WhatsApp, optionally quoting the triggering message (with retry)
+async function sendMessageInternal(to: string, text: string, quoted?: WAMessage): Promise<void> {
 	if (!socket) {
 		throw new Error("WhatsApp not connected");
 	}
@@ -1143,12 +1159,24 @@ async function sendMessageInternal(to: string, text: string): Promise<void> {
 	// Chunk if needed (WhatsApp supports up to 4096 chars)
 	const chunks = chunkMessage(text, 4000);
 
-	for (const chunk of chunks) {
-		const content: AnyMessageContent = { text: chunk };
+	for (let i = 0; i < chunks.length; i++) {
+		const content: AnyMessageContent = { text: chunks[i] };
+		// Only quote on the first chunk to avoid redundant reply threading
+		const opts = i === 0 && quoted ? { quoted } : {};
 		await withRetry(
-			() => {
+			async () => {
 				if (!socket) throw new Error("WhatsApp not connected");
-				return socket.sendMessage(jid, content);
+				try {
+					await socket.sendMessage(jid, content, opts);
+				} catch (err) {
+					if (i === 0 && quoted) {
+						// Quoted message may have been deleted or expired; retry without quoting
+						logger.warn(`Failed to send with quote, retrying without: ${String(err)}`);
+						await socket.sendMessage(jid, content);
+					} else {
+						throw err;
+					}
+				}
 			},
 			`sendMessage to ${jid}`,
 			logger,
@@ -1230,7 +1258,7 @@ async function sendMediaInternal(to: string, filePath: string, caption?: string)
 const FILE_PATH_PATTERN = /\[(?:File|Media|Image|Attachment):\s*([^\]]+)\]/gi;
 
 // Send a response that may contain text and/or media file references
-async function sendResponse(to: string, response: string): Promise<void> {
+async function sendResponse(to: string, response: string, quoted?: WAMessage): Promise<void> {
   // Extract any file paths from the response
   const filePaths: string[] = [];
   let textOnly = response.replace(FILE_PATH_PATTERN, (_match, filePath: string) => {
@@ -1240,7 +1268,7 @@ async function sendResponse(to: string, response: string): Promise<void> {
 
   // Send text portion if any
   if (textOnly) {
-    await sendMessageInternal(to, textOnly);
+    await sendMessageInternal(to, textOnly, quoted);
   }
 
   // Send each media file -- ONLY if it resides inside ATTACHMENTS_DIR (finding 1: prevent file exfiltration)
