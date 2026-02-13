@@ -24,10 +24,16 @@ import qrcode from "qrcode-terminal";
 import winston from "winston";
 import type {
 	AgentIdentity,
+	ChannelCommand,
+	ChannelCommandContext,
+	ChannelMessageContext,
+	ChannelMessageParser,
+	ChannelProvider,
 	ChannelRef,
 	ConfigField,
 	ConfigSchema,
 	PluginInjectOptions,
+	PluginManifest,
 	StreamMessage,
 	WOPRPlugin,
 	WOPRPluginContext,
@@ -121,6 +127,70 @@ const activeTypingIntervals: Set<NodeJS.Timeout> = new Set();
 
 // Ref-counting per jid to handle concurrent typing indicators
 const typingRefCounts: Map<string, { count: number; interval: NodeJS.Timeout }> = new Map();
+
+// ============================================================================
+// Channel Provider (cross-plugin command/parser registration)
+// ============================================================================
+
+const registeredCommands: Map<string, ChannelCommand> = new Map();
+const registeredParsers: Map<string, ChannelMessageParser> = new Map();
+
+/**
+ * WhatsApp Channel Provider - allows other plugins to register commands
+ * and message parsers on the WhatsApp channel.
+ */
+const whatsappChannelProvider: ChannelProvider = {
+	id: "whatsapp",
+
+	registerCommand(cmd: ChannelCommand): void {
+		registeredCommands.set(cmd.name, cmd);
+		logger?.info(`Channel command registered: ${cmd.name}`);
+	},
+
+	unregisterCommand(name: string): void {
+		registeredCommands.delete(name);
+	},
+
+	getCommands(): ChannelCommand[] {
+		return Array.from(registeredCommands.values());
+	},
+
+	addMessageParser(parser: ChannelMessageParser): void {
+		registeredParsers.set(parser.id, parser);
+		logger?.info(`Message parser registered: ${parser.id}`);
+	},
+
+	removeMessageParser(id: string): void {
+		registeredParsers.delete(id);
+	},
+
+	getMessageParsers(): ChannelMessageParser[] {
+		return Array.from(registeredParsers.values());
+	},
+
+	async send(channel: string, content: string): Promise<void> {
+		await sendMessageInternal(channel, content);
+	},
+
+	getBotUsername(): string {
+		return agentIdentity.name || "WOPR";
+	},
+};
+
+// ============================================================================
+// WhatsApp Extension (for cross-plugin notifications)
+// ============================================================================
+
+/**
+ * Extension object exposed via ctx.registerExtension("whatsapp", ...).
+ * Other plugins can use this to send messages through WhatsApp.
+ */
+const whatsappExtension = {
+	send: async (to: string, message: string): Promise<void> => {
+		await sendMessageInternal(to, message);
+	},
+	isConnected: (): boolean => socket !== null,
+};
 
 // Attachments directory for downloaded media
 const WOPR_HOME =
@@ -471,6 +541,36 @@ export function mediaCategory(mediaType: string): string {
   return "document";
 }
 
+// Run registered message parsers against an incoming message
+async function runMessageParsers(waMsg: WhatsAppMessage): Promise<void> {
+	if (!waMsg.text) return;
+
+	for (const parser of registeredParsers.values()) {
+		try {
+			const matches =
+				typeof parser.pattern === "function"
+					? parser.pattern(waMsg.text)
+					: parser.pattern.test(waMsg.text);
+
+			if (matches) {
+				const parserCtx: ChannelMessageContext = {
+					channel: waMsg.from,
+					channelType: "whatsapp",
+					sender: waMsg.sender || waMsg.from.split("@")[0],
+					content: waMsg.text,
+					reply: async (msg: string) => {
+						await sendMessageInternal(waMsg.from, msg);
+					},
+					getBotUsername: () => whatsappChannelProvider.getBotUsername(),
+				};
+				await parser.handler(parserCtx);
+			}
+		} catch (e) {
+			logger.error(`Message parser ${parser.id} error: ${e}`);
+		}
+	}
+}
+
 // Process incoming message
 async function handleIncomingMessage(msg: WAMessage): Promise<void> {
 	if (!socket || !ctx) return;
@@ -574,6 +674,9 @@ async function handleIncomingMessage(msg: WAMessage): Promise<void> {
 		try {
 			const handled = await handleTextCommand(waMessage, sessionKey);
 			if (!handled) {
+				// Run registered message parsers from other plugins
+				await runMessageParsers(waMessage);
+
 				// Not a command — track message count and inject into WOPR
 				const state = getSessionState(sessionKey);
 				state.messageCount++;
@@ -837,9 +940,26 @@ async function handleTextCommand(
 			return true;
 		}
 
-		default:
+		default: {
+			// Check registered channel commands from other plugins
+			const channelCmd = registeredCommands.get(cmd.name);
+			if (channelCmd) {
+				const commandCtx: ChannelCommandContext = {
+					channel: waMsg.from,
+					channelType: "whatsapp",
+					sender: waMsg.sender || waMsg.from.split("@")[0],
+					args: cmd.args ? cmd.args.split(/\s+/) : [],
+					reply: async (msg: string) => {
+						await sendMessageInternal(waMsg.from, msg);
+					},
+					getBotUsername: () => whatsappChannelProvider.getBotUsername(),
+				};
+				await channelCmd.handler(commandCtx);
+				return true;
+			}
 			// Not a recognized command, treat as normal message
 			return false;
+		}
 	}
 }
 
@@ -1252,11 +1372,40 @@ async function startSession(): Promise<void> {
 	socket = await createSocket(authDir);
 }
 
+// Plugin manifest for WaaS integration
+const manifest: PluginManifest = {
+	name: "@wopr-network/plugin-whatsapp",
+	version: "1.0.0",
+	description: "WhatsApp integration using Baileys (WhatsApp Web)",
+	author: "WOPR Network",
+	license: "MIT",
+	repository: "https://github.com/wopr-network/wopr-plugin-whatsapp",
+	capabilities: ["channel"],
+	category: "channel",
+	icon: "📱",
+	tags: ["whatsapp", "messaging", "channel", "baileys"],
+	requires: {
+		network: {
+			outbound: true,
+		},
+		storage: {
+			persistent: true,
+			estimatedSize: "50MB",
+		},
+	},
+	configSchema,
+	lifecycle: {
+		shutdownBehavior: "graceful",
+		shutdownTimeoutMs: 10000,
+	},
+};
+
 // Plugin definition
 const plugin: WOPRPlugin = {
 	name: "whatsapp",
 	version: "1.0.0",
 	description: "WhatsApp integration using Baileys (WhatsApp Web)",
+	manifest,
 
 	async init(context: WOPRPluginContext): Promise<void> {
 		ctx = context;
@@ -1267,6 +1416,18 @@ const plugin: WOPRPlugin = {
 
 		// Register config schema
 		ctx.registerConfigSchema("whatsapp", configSchema);
+
+		// Register as a channel provider so other plugins can add commands/parsers
+		if (ctx.registerChannelProvider) {
+			ctx.registerChannelProvider(whatsappChannelProvider);
+			logger.info("Registered WhatsApp channel provider");
+		}
+
+		// Register the WhatsApp extension so other plugins can send notifications
+		if (ctx.registerExtension) {
+			ctx.registerExtension("whatsapp", whatsappExtension);
+			logger.info("Registered WhatsApp extension");
+		}
 
 		// Refresh identity
 		await refreshIdentity();
@@ -1288,10 +1449,18 @@ const plugin: WOPRPlugin = {
 
 	async shutdown(): Promise<void> {
 		clearAllTypingIntervals();
+		if (ctx?.unregisterChannelProvider) {
+			ctx.unregisterChannelProvider("whatsapp");
+		}
+		if (ctx?.unregisterExtension) {
+			ctx.unregisterExtension("whatsapp");
+		}
 		if (socket) {
 			await socket.logout();
 			socket = null;
 		}
+		registeredCommands.clear();
+		registeredParsers.clear();
 		sessionStates.clear();
 		messageCache.clear();
 		contacts.clear();
