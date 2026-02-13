@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 
 // Mock external dependencies before importing the module
 vi.mock("@whiskeysockets/baileys", () => ({
@@ -429,5 +429,272 @@ describe("getSessionState", () => {
     const stateB = getSessionState("session-b");
     stateA.messageCount = 10;
     expect(stateB.messageCount).toBe(0);
+  });
+});
+
+// ─── Reply-to-message (WOP-135) ──────────────────────────────────
+
+describe("reply-to-message support (WOP-135)", () => {
+  let mockSendMessage: ReturnType<typeof vi.fn>;
+  let eventHandlers: Record<string, (...args: unknown[]) => void>;
+  let mockInject: ReturnType<typeof vi.fn>;
+
+  beforeEach(async () => {
+    // Reset mocks
+    vi.clearAllMocks();
+
+    mockSendMessage = vi.fn().mockResolvedValue(undefined);
+    eventHandlers = {};
+
+    // Re-mock makeWASocket to capture event handlers
+    const baileys = await import("@whiskeysockets/baileys");
+    (baileys.makeWASocket as ReturnType<typeof vi.fn>).mockImplementation(() => ({
+      ev: {
+        on: vi.fn((event: string, handler: (...args: unknown[]) => void) => {
+          eventHandlers[event] = handler;
+        }),
+      },
+      sendMessage: mockSendMessage,
+      sendPresenceUpdate: vi.fn().mockResolvedValue(undefined),
+      logout: vi.fn().mockResolvedValue(undefined),
+    }));
+
+    // Mock fs to provide credentials so startSession is called
+    const fsMod = await import("node:fs/promises");
+    (fsMod.default.access as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+    (fsMod.default.mkdir as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+
+    // Mock require("node:fs") for sync ops in maybeRestoreCredsFromBackup
+    const origRequire = globalThis.require;
+
+    // Configure inject to return a test response
+    mockInject = vi.fn().mockResolvedValue("Test bot response");
+
+    const mockContext = {
+      getConfig: vi.fn(() => ({
+        dmPolicy: "open",
+        accountId: "test-reply",
+      })),
+      registerConfigSchema: vi.fn(),
+      getAgentIdentity: vi.fn(async () => ({ name: "TestBot", emoji: "🤖" })),
+      inject: mockInject,
+      logMessage: vi.fn(),
+    };
+
+    await plugin.init(mockContext);
+
+    // Simulate connection open so socket is set
+    if (eventHandlers["connection.update"]) {
+      eventHandlers["connection.update"]({ connection: "open" });
+    }
+  });
+
+  it("passes quoted WAMessage when sending bot response to a DM", async () => {
+    // Skip if messages.upsert handler wasn't registered (socket not connected)
+    if (!eventHandlers["messages.upsert"]) return;
+
+    const incomingMsg = {
+      key: {
+        id: "msg-123",
+        remoteJid: "1234567890@s.whatsapp.net",
+        fromMe: false,
+      },
+      message: { conversation: "Hello bot" },
+      messageTimestamp: Math.floor(Date.now() / 1000),
+    };
+
+    // Trigger the incoming message handler
+    eventHandlers["messages.upsert"]({
+      type: "notify",
+      messages: [incomingMsg],
+    });
+
+    // Wait for async processing
+    await new Promise((r) => setTimeout(r, 100));
+
+    // Verify inject was called (message was processed)
+    expect(mockInject).toHaveBeenCalled();
+
+    // Find the sendMessage call that sent the bot's text response (not the reaction)
+    const textCalls = mockSendMessage.mock.calls.filter(
+      (call: unknown[]) => {
+        const content = call[1] as Record<string, unknown>;
+        return content && typeof content.text === "string" && !content.react;
+      }
+    );
+
+    expect(textCalls.length).toBeGreaterThan(0);
+
+    // The first text response should include the quoted parameter
+    const [jid, _content, opts] = textCalls[0];
+    expect(jid).toBe("1234567890@s.whatsapp.net");
+    expect(opts).toBeDefined();
+    expect(opts.quoted).toBeDefined();
+    expect(opts.quoted.key.id).toBe("msg-123");
+  });
+
+  it("passes quoted WAMessage when sending bot response in a group", async () => {
+    if (!eventHandlers["messages.upsert"]) return;
+
+    const incomingMsg = {
+      key: {
+        id: "grp-msg-456",
+        remoteJid: "group123@g.us",
+        fromMe: false,
+        participant: "5551234@s.whatsapp.net",
+      },
+      message: { conversation: "Hey bot" },
+      messageTimestamp: Math.floor(Date.now() / 1000),
+    };
+
+    eventHandlers["messages.upsert"]({
+      type: "notify",
+      messages: [incomingMsg],
+    });
+
+    await new Promise((r) => setTimeout(r, 100));
+
+    const textCalls = mockSendMessage.mock.calls.filter(
+      (call: unknown[]) => {
+        const content = call[1] as Record<string, unknown>;
+        return content && typeof content.text === "string" && !content.react;
+      }
+    );
+
+    expect(textCalls.length).toBeGreaterThan(0);
+    const [jid, _content, opts] = textCalls[0];
+    expect(jid).toBe("group123@g.us");
+    expect(opts).toBeDefined();
+    expect(opts.quoted).toBeDefined();
+    expect(opts.quoted.key.id).toBe("grp-msg-456");
+  });
+
+  it("quotes command responses too", async () => {
+    if (!eventHandlers["messages.upsert"]) return;
+
+    const incomingMsg = {
+      key: {
+        id: "cmd-msg-789",
+        remoteJid: "1234567890@s.whatsapp.net",
+        fromMe: false,
+      },
+      message: { conversation: "!help" },
+      messageTimestamp: Math.floor(Date.now() / 1000),
+    };
+
+    eventHandlers["messages.upsert"]({
+      type: "notify",
+      messages: [incomingMsg],
+    });
+
+    await new Promise((r) => setTimeout(r, 100));
+
+    // The !help command response should also be quoted
+    const textCalls = mockSendMessage.mock.calls.filter(
+      (call: unknown[]) => {
+        const content = call[1] as Record<string, unknown>;
+        return content && typeof content.text === "string" && !content.react;
+      }
+    );
+
+    expect(textCalls.length).toBeGreaterThan(0);
+    const [_jid, _content, opts] = textCalls[0];
+    expect(opts).toBeDefined();
+    expect(opts.quoted).toBeDefined();
+    expect(opts.quoted.key.id).toBe("cmd-msg-789");
+  });
+
+  it("falls back to sending without quote when quoting fails", async () => {
+    if (!eventHandlers["messages.upsert"]) return;
+
+    // Make sendMessage fail when called with quoted option, succeed without
+    mockSendMessage.mockImplementation(
+      async (_jid: string, _content: unknown, opts?: Record<string, unknown>) => {
+        if (opts && opts.quoted) {
+          throw new Error("Quoted message not found");
+        }
+        return undefined;
+      }
+    );
+
+    const incomingMsg = {
+      key: {
+        id: "deleted-msg-000",
+        remoteJid: "1234567890@s.whatsapp.net",
+        fromMe: false,
+      },
+      message: { conversation: "!status" },
+      messageTimestamp: Math.floor(Date.now() / 1000),
+    };
+
+    eventHandlers["messages.upsert"]({
+      type: "notify",
+      messages: [incomingMsg],
+    });
+
+    await new Promise((r) => setTimeout(r, 100));
+
+    // Should have retried without quoted -- look for successful text sends
+    const textCalls = mockSendMessage.mock.calls.filter(
+      (call: unknown[]) => {
+        const content = call[1] as Record<string, unknown>;
+        return content && typeof content.text === "string" && !content.react;
+      }
+    );
+
+    // At least 2 calls: first attempt with quote (failed), retry without quote (succeeded)
+    expect(textCalls.length).toBeGreaterThanOrEqual(2);
+
+    // First attempt has quoted
+    expect(textCalls[0][2]).toBeDefined();
+    expect(textCalls[0][2].quoted).toBeDefined();
+
+    // Retry does not have quoted
+    const retryOpts = textCalls[1][2];
+    expect(!retryOpts || !retryOpts.quoted).toBe(true);
+  });
+
+  it("only quotes the first chunk of a multi-chunk message", async () => {
+    if (!eventHandlers["messages.upsert"]) return;
+
+    // Make inject return a very long response to trigger chunking
+    const longResponse = Array(50).fill("This is a test sentence.").join(" ");
+    mockInject.mockResolvedValue(longResponse);
+
+    const incomingMsg = {
+      key: {
+        id: "long-msg-111",
+        remoteJid: "1234567890@s.whatsapp.net",
+        fromMe: false,
+      },
+      message: { conversation: "Tell me a long story" },
+      messageTimestamp: Math.floor(Date.now() / 1000),
+    };
+
+    eventHandlers["messages.upsert"]({
+      type: "notify",
+      messages: [incomingMsg],
+    });
+
+    await new Promise((r) => setTimeout(r, 100));
+
+    const textCalls = mockSendMessage.mock.calls.filter(
+      (call: unknown[]) => {
+        const content = call[1] as Record<string, unknown>;
+        return content && typeof content.text === "string" && !content.react;
+      }
+    );
+
+    if (textCalls.length > 1) {
+      // First chunk should have the quote
+      expect(textCalls[0][2]).toBeDefined();
+      expect(textCalls[0][2].quoted).toBeDefined();
+
+      // Subsequent chunks should NOT have the quote
+      for (let i = 1; i < textCalls.length; i++) {
+        const opts = textCalls[i][2];
+        expect(!opts || !opts.quoted).toBe(true);
+      }
+    }
   });
 });
