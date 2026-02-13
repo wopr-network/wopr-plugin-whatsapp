@@ -38,6 +38,7 @@ import type {
 	WOPRPlugin,
 	WOPRPluginContext,
 } from "./types.js";
+import { type RetryConfig, DEFAULT_RETRY_CONFIG, withRetry } from "./retry.js";
 
 // Media types that WhatsApp supports for incoming messages
 const MEDIA_MESSAGE_TYPES = [
@@ -86,6 +87,7 @@ interface WhatsAppConfig {
 		string,
 		{ code: string; name: string; requestedAt: number }
 	>;
+	retry?: Partial<RetryConfig>;
 }
 
 // Per-session state (mirrors Discord plugin's SessionState)
@@ -706,7 +708,7 @@ async function handleIncomingMessage(msg: WAMessage): Promise<void> {
 	}
 }
 
-// Send reaction internally
+// Send reaction internally (with retry)
 async function sendReactionInternal(
 	chatJid: string,
 	messageId: string,
@@ -714,16 +716,24 @@ async function sendReactionInternal(
 ): Promise<void> {
 	if (!socket) return;
 
-	await socket.sendMessage(chatJid, {
-		react: {
-			text: emoji,
-			key: {
-				remoteJid: chatJid,
-				id: messageId,
-				fromMe: false,
-			},
+	await withRetry(
+		() => {
+			if (!socket) throw new Error("WhatsApp not connected");
+			return socket.sendMessage(chatJid, {
+				react: {
+					text: emoji,
+					key: {
+						remoteJid: chatJid,
+						id: messageId,
+						fromMe: false,
+					},
+				},
+			});
 		},
-	});
+		`sendReaction to ${chatJid}`,
+		logger,
+		config.retry,
+	);
 }
 
 // Parse a !command from message text. Returns null if not a command.
@@ -1091,20 +1101,29 @@ async function handleStreamChunk(
 	// Could implement chunked sending for long messages
 }
 
-// Send a text message to WhatsApp
+// Send a text message to WhatsApp (with retry)
 async function sendMessageInternal(to: string, text: string): Promise<void> {
 	if (!socket) {
 		throw new Error("WhatsApp not connected");
 	}
 
 	const jid = toJid(to);
+	const retryConfig = config.retry;
 
 	// Chunk if needed (WhatsApp supports up to 4096 chars)
 	const chunks = chunkMessage(text, 4000);
 
 	for (const chunk of chunks) {
 		const content: AnyMessageContent = { text: chunk };
-		await socket.sendMessage(jid, content);
+		await withRetry(
+			() => {
+				if (!socket) throw new Error("WhatsApp not connected");
+				return socket.sendMessage(jid, content);
+			},
+			`sendMessage to ${jid}`,
+			logger,
+			retryConfig,
+		);
 	}
 }
 
@@ -1165,7 +1184,15 @@ async function sendMediaInternal(to: string, filePath: string, caption?: string)
     content = { document: buffer, mimetype: "application/octet-stream", fileName: path.basename(filePath), caption };
   }
 
-  await socket.sendMessage(jid, content);
+  await withRetry(
+    () => {
+      if (!socket) throw new Error("WhatsApp not connected");
+      return socket.sendMessage(jid, content);
+    },
+    `sendMedia to ${jid}`,
+    logger,
+    config.retry,
+  );
   logger.info(`Media sent to ${jid}: ${path.basename(filePath)}`);
 }
 
