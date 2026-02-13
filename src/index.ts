@@ -41,6 +41,10 @@ import type {
 import { type RetryConfig, DEFAULT_RETRY_CONFIG, withRetry } from "./retry.js";
 import { ReactionStateMachine, DEFAULT_REACTION_EMOJIS } from "./reactions.js";
 import { StreamManager } from "./streaming.js";
+import {
+	createWhatsAppWebMCPExtension,
+	type WhatsAppWebMCPExtension,
+} from "./whatsapp-extension.js";
 
 // Media types that WhatsApp supports for incoming messages
 const MEDIA_MESSAGE_TYPES = [
@@ -122,6 +126,11 @@ const groups: Map<string, GroupMetadata> = new Map();
 const messageCache: Map<string, WhatsAppMessage> = new Map();
 const sessionOverrides: Map<string, string> = new Map();
 let logger: winston.Logger;
+
+// WebMCP extension state
+let webmcpExtension: WhatsAppWebMCPExtension | null = null;
+let connectTime: number | null = null;
+let totalMessageCount = 0;
 
 // Stream manager for active streaming sessions
 const streamManager = new StreamManager();
@@ -596,6 +605,9 @@ async function handleIncomingMessage(msg: WAMessage): Promise<void> {
 		logger.info(`Message from ${from} blocked by DM policy`);
 		return;
 	}
+
+	// Track total messages processed (for WebMCP stats)
+	totalMessageCount++;
 
 	// Interrupt any active stream for this chat (user sent a new message mid-stream)
 	const jid = toJid(from);
@@ -1395,10 +1407,12 @@ async function createSocket(
 			}
 			clearAllTypingIntervals();
 			socket = null;
+			connectTime = null;
 		}
 
 		if (connection === "open") {
 			logger.info("WhatsApp Web connected");
+			connectTime = Date.now();
 		}
 	});
 
@@ -1497,8 +1511,27 @@ async function startSession(): Promise<void> {
 	socket = await createSocket(authDir);
 }
 
+// WebMCP tool declarations (read by wopr-plugin-webui for manifest-driven registration)
+const webmcpTools = [
+	{
+		name: "getWhatsappStatus",
+		description: "Get WhatsApp connection status: connected/disconnected, phone number, and QR pairing state.",
+		annotations: { readOnlyHint: true },
+	},
+	{
+		name: "listWhatsappChats",
+		description: "List active WhatsApp chats including individual and group conversations.",
+		annotations: { readOnlyHint: true },
+	},
+	{
+		name: "getWhatsappMessageStats",
+		description: "Get WhatsApp message processing statistics: messages processed, active conversations, and group count.",
+		annotations: { readOnlyHint: true },
+	},
+];
+
 // Plugin manifest for WaaS integration
-const manifest: PluginManifest = {
+const manifest: PluginManifest & { webmcpTools?: typeof webmcpTools } = {
 	name: "@wopr-network/plugin-whatsapp",
 	version: "1.0.0",
 	description: "WhatsApp integration using Baileys (WhatsApp Web)",
@@ -1523,6 +1556,7 @@ const manifest: PluginManifest = {
 		shutdownBehavior: "graceful",
 		shutdownTimeoutMs: 10000,
 	},
+	webmcpTools,
 };
 
 // Plugin definition
@@ -1558,6 +1592,32 @@ const plugin: WOPRPlugin = {
 			logger.info("Registered WhatsApp extension");
 		}
 
+		// Create and register WebMCP extension for read-only status/chat/stats tools
+		webmcpExtension = createWhatsAppWebMCPExtension({
+			getSocket: () => socket,
+			getContacts: () => contacts,
+			getGroups: () => groups,
+			getSessionKeys: () => Array.from(sessionStates.keys()),
+			getMessageCount: () => totalMessageCount,
+			getAccountId: () => config.accountId || "default",
+			hasCredentials: () => {
+				const accountId = config.accountId || "default";
+				const authDir = getAuthDir(accountId);
+				const credsPath = path.join(authDir, "creds.json");
+				try {
+					const fsSync = require("node:fs");
+					return fsSync.existsSync(credsPath);
+				} catch {
+					return false;
+				}
+			},
+			getConnectTime: () => connectTime,
+		});
+		if (ctx.registerExtension) {
+			ctx.registerExtension("whatsapp-webmcp", webmcpExtension);
+			logger.info("Registered WhatsApp WebMCP extension");
+		}
+
 		// Ensure auth directory exists
 		const accountId = config.accountId || "default";
 		await ensureAuthDir(accountId);
@@ -1581,7 +1641,11 @@ const plugin: WOPRPlugin = {
 		}
 		if (ctx?.unregisterExtension) {
 			ctx.unregisterExtension("whatsapp");
+			ctx.unregisterExtension("whatsapp-webmcp");
 		}
+		webmcpExtension = null;
+		connectTime = null;
+		totalMessageCount = 0;
 		if (socket) {
 			await socket.logout();
 			socket = null;
@@ -1599,5 +1663,18 @@ const plugin: WOPRPlugin = {
 
 export { ReactionStateMachine, DEFAULT_REACTION_EMOJIS } from "./reactions.js";
 export type { ReactionState, SendReactionFn } from "./reactions.js";
+
+export { registerWhatsappTools } from "./webmcp-whatsapp.js";
+export type {
+	WebMCPTool,
+	WebMCPRegistry,
+	AuthContext as WebMCPAuthContext,
+} from "./webmcp-whatsapp.js";
+export type {
+	WhatsAppStatusInfo,
+	ChatInfo,
+	WhatsAppMessageStatsInfo,
+	WhatsAppWebMCPExtension,
+} from "./whatsapp-extension.js";
 
 export default plugin;
