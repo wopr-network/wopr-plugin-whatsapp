@@ -531,7 +531,7 @@ describe("reply-to-message support (WOP-135)", () => {
   });
 
   it("passes quoted WAMessage when sending bot response in a group", async () => {
-    if (!eventHandlers["messages.upsert"]) return;
+    expect(eventHandlers["messages.upsert"]).toBeDefined();
 
     const incomingMsg = {
       key: {
@@ -567,7 +567,7 @@ describe("reply-to-message support (WOP-135)", () => {
   });
 
   it("quotes command responses too", async () => {
-    if (!eventHandlers["messages.upsert"]) return;
+    expect(eventHandlers["messages.upsert"]).toBeDefined();
 
     const incomingMsg = {
       key: {
@@ -602,7 +602,7 @@ describe("reply-to-message support (WOP-135)", () => {
   });
 
   it("falls back to sending without quote when quoting fails", async () => {
-    if (!eventHandlers["messages.upsert"]) return;
+    expect(eventHandlers["messages.upsert"]).toBeDefined();
 
     // Make sendMessage fail when called with quoted option, succeed without
     mockSendMessage.mockImplementation(
