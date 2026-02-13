@@ -1154,6 +1154,8 @@ async function injectMessage(
 		}
 		throw err;
 	} finally {
+		// Clean up stream timer if inject threw before finalize ran
+		streamManager.interrupt(jid);
 		stopTypingIndicator(waMsg.from);
 	}
 }
