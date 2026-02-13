@@ -39,6 +39,7 @@ import type {
 	WOPRPluginContext,
 } from "./types.js";
 import { type RetryConfig, DEFAULT_RETRY_CONFIG, withRetry } from "./retry.js";
+import { ReactionStateMachine, DEFAULT_REACTION_EMOJIS } from "./reactions.js";
 
 // Media types that WhatsApp supports for incoming messages
 const MEDIA_MESSAGE_TYPES = [
@@ -321,10 +322,6 @@ async function refreshIdentity(): Promise<void> {
 	} catch (e) {
 		logger.warn("Failed to refresh identity:", String(e));
 	}
-}
-
-function getAckReaction(): string {
-	return agentIdentity.emoji?.trim() || "👀";
 }
 
 function getAuthDir(accountId: string): string {
@@ -669,35 +666,51 @@ async function handleIncomingMessage(msg: WAMessage): Promise<void> {
 	const logText = text || (mediaType ? `[${mediaType}]` : "[media]");
 	ctx.logMessage(sessionKey, logText, logOptions);
 
-	// Send ack reaction
-	sendReactionInternal(from, messageId, getAckReaction()).catch(() => {});
+	// Create reaction state machine for this message
+	const reactionSM = new ReactionStateMachine(
+		from,
+		messageId,
+		sendReactionInternal,
+		logger,
+	);
+
+	// Set queued state when message enters the pipeline
+	await reactionSM.transition("queued");
 
 	// Check for !command prefix before injecting
 	if (text) {
 		try {
 			const handled = await handleTextCommand(waMessage, sessionKey);
-			if (!handled) {
+			if (handled) {
+				// Command was handled directly — mark done
+				await reactionSM.transition("active");
+				await reactionSM.transition("done");
+			} else {
 				// Run registered message parsers from other plugins
 				await runMessageParsers(waMessage);
 
 				// Not a command — track message count and inject into WOPR
 				const state = getSessionState(sessionKey);
 				state.messageCount++;
-				await injectMessage(waMessage, sessionKey);
+				await injectMessage(waMessage, sessionKey, reactionSM);
 			}
 		} catch (e) {
 			logger.error(`Command handler error: ${e}`);
-			await injectMessage(waMessage, sessionKey);
+			await injectMessage(waMessage, sessionKey, reactionSM);
 		}
 		return;
 	}
 
 	// No text — skip if no media either
-	if (!mediaPath) return;
+	if (!mediaPath) {
+		await reactionSM.transition("active");
+		await reactionSM.transition("done");
+		return;
+	}
 
 	// Media only — inject into WOPR, then clean up temp media
 	try {
-		await injectMessage(waMessage, sessionKey);
+		await injectMessage(waMessage, sessionKey, reactionSM);
 	} finally {
 		// Clean up downloaded media after processing
 		if (mediaPath) {
@@ -1036,6 +1049,7 @@ function clearAllTypingIntervals(): void {
 async function injectMessage(
 	waMsg: WhatsAppMessage,
 	sessionKey: string,
+	reactionSM?: ReactionStateMachine,
 ): Promise<void> {
 	if (!ctx) return;
 
@@ -1079,6 +1093,11 @@ async function injectMessage(
 		...(images.length > 0 ? { images } : {}),
 	};
 
+	// Transition to active — LLM processing starts
+	if (reactionSM) {
+		await reactionSM.transition("active");
+	}
+
 	// Show typing indicator while processing (ref-counted per jid)
 	startTypingIndicator(waMsg.from);
 
@@ -1087,6 +1106,17 @@ async function injectMessage(
 
 		// Send final response
 		await sendResponse(waMsg.from, response);
+
+		// Transition to done — processing complete
+		if (reactionSM) {
+			await reactionSM.transition("done");
+		}
+	} catch (err) {
+		// Transition to error — processing failed
+		if (reactionSM) {
+			await reactionSM.transition("error");
+		}
+		throw err;
 	} finally {
 		stopTypingIndicator(waMsg.from);
 	}
@@ -1498,5 +1528,8 @@ const plugin: WOPRPlugin = {
 		ctx = null;
 	},
 };
+
+export { ReactionStateMachine, DEFAULT_REACTION_EMOJIS } from "./reactions.js";
+export type { ReactionState, SendReactionFn } from "./reactions.js";
 
 export default plugin;
