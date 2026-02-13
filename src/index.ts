@@ -91,7 +91,7 @@ interface SessionState {
 
 const sessionStates = new Map<string, SessionState>();
 
-function getSessionState(sessionKey: string): SessionState {
+export function getSessionState(sessionKey: string): SessionState {
 	if (!sessionStates.has(sessionKey)) {
 		sessionStates.set(sessionKey, {
 			thinkingLevel: "medium",
@@ -142,7 +142,7 @@ async function isInsideDir(filePath: string, allowedDir: string): Promise<boolea
 }
 
 /** Sanitize a filename: strip path separators, control chars, and fallback to a hash. */
-function sanitizeFilename(name: string): string {
+export function sanitizeFilename(name: string): string {
   // Remove anything that isn't alphanumeric, dot, dash, or underscore
   const clean = name.replace(/[^a-zA-Z0-9._-]/g, "_");
   if (!clean || clean === "." || clean === "..") {
@@ -182,7 +182,7 @@ function initLogger(): winston.Logger {
 }
 
 // Config schema for the plugin
-const configSchema: ConfigSchema = {
+export const configSchema: ConfigSchema = {
 	title: "WhatsApp Integration",
 	description: "Configure WhatsApp Web integration using Baileys",
 	fields: [
@@ -325,7 +325,7 @@ function getStatusCode(err: any): number | undefined {
 }
 
 // Convert phone number or JID to JID format
-function toJid(phoneOrJid: string): string {
+export function toJid(phoneOrJid: string): string {
 	if (phoneOrJid.includes("@")) {
 		return phoneOrJid;
 	}
@@ -334,7 +334,7 @@ function toJid(phoneOrJid: string): string {
 }
 
 // Check if sender is allowed based on DM policy
-function isAllowed(from: string, isGroup: boolean): boolean {
+export function isAllowed(from: string, isGroup: boolean): boolean {
 	if (isGroup) return true; // Groups are always allowed
 
 	const policy = config.dmPolicy || "allowlist";
@@ -360,7 +360,7 @@ function isAllowed(from: string, isGroup: boolean): boolean {
 }
 
 // Extract text from WhatsApp message
-function extractText(msg: WAMessage): string | undefined {
+export function extractText(msg: WAMessage): string | undefined {
 	const content = msg.message;
 	if (!content) return undefined;
 
@@ -463,7 +463,7 @@ async function downloadWhatsAppMedia(msg: WAMessage): Promise<string | null> {
 }
 
 // Determine the media category (image, audio, document, video, sticker)
-function mediaCategory(mediaType: string): string {
+export function mediaCategory(mediaType: string): string {
   if (mediaType === "imageMessage") return "image";
   if (mediaType === "audioMessage") return "audio";
   if (mediaType === "videoMessage") return "video";
@@ -623,7 +623,7 @@ async function sendReactionInternal(
 }
 
 // Parse a !command from message text. Returns null if not a command.
-function parseCommand(text: string): { name: string; args: string } | null {
+export function parseCommand(text: string): { name: string; args: string } | null {
 	const match = text.match(/^!(\w+)(?:\s+(.*))?$/s);
 	if (!match) return null;
 	return { name: match[1].toLowerCase(), args: (match[2] || "").trim() };
@@ -1079,7 +1079,7 @@ async function sendResponse(to: string, response: string): Promise<void> {
   }
 }
 
-function chunkMessage(text: string, maxLength: number): string[] {
+export function chunkMessage(text: string, maxLength: number): string[] {
 	if (text.length <= maxLength) return [text];
 
 	const chunks: string[] = [];
