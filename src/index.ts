@@ -187,6 +187,7 @@ const whatsappChannelProvider: ChannelProvider = {
  */
 const whatsappExtension = {
 	send: async (to: string, message: string): Promise<void> => {
+		if (!socket) throw new Error("WhatsApp socket is not connected");
 		await sendMessageInternal(to, message);
 	},
 	isConnected: (): boolean => socket !== null,
@@ -1417,6 +1418,10 @@ const plugin: WOPRPlugin = {
 		// Register config schema
 		ctx.registerConfigSchema("whatsapp", configSchema);
 
+		// Refresh identity BEFORE registering providers so getBotUsername()
+		// returns the configured agent name from the start.
+		await refreshIdentity();
+
 		// Register as a channel provider so other plugins can add commands/parsers
 		if (ctx.registerChannelProvider) {
 			ctx.registerChannelProvider(whatsappChannelProvider);
@@ -1428,9 +1433,6 @@ const plugin: WOPRPlugin = {
 			ctx.registerExtension("whatsapp", whatsappExtension);
 			logger.info("Registered WhatsApp extension");
 		}
-
-		// Refresh identity
-		await refreshIdentity();
 
 		// Ensure auth directory exists
 		const accountId = config.accountId || "default";
