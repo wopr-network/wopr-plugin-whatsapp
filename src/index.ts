@@ -7,13 +7,14 @@ import os from "node:os";
 import path from "node:path";
 import {
 	type AnyMessageContent,
+	type AuthenticationState,
 	type Contact,
 	DisconnectReason,
 	downloadMediaMessage,
 	extensionForMediaMessage,
 	fetchLatestBaileysVersion,
-	getContentType,
 	type GroupMetadata,
+	getContentType,
 	makeCacheableSignalKeyStore,
 	makeWASocket,
 	useMultiFileAuthState,
@@ -22,6 +23,17 @@ import {
 } from "@whiskeysockets/baileys";
 import qrcode from "qrcode-terminal";
 import winston from "winston";
+import { useStorageAuthState } from "./auth-state.js";
+import { DEFAULT_REACTION_EMOJIS, ReactionStateMachine } from "./reactions.js";
+import { DEFAULT_RETRY_CONFIG, type RetryConfig, withRetry } from "./retry.js";
+import type { PluginContextWithStorage, PluginStorageAPI } from "./storage.js";
+import {
+	WHATSAPP_CREDS_SCHEMA,
+	WHATSAPP_CREDS_TABLE,
+	WHATSAPP_KEYS_SCHEMA,
+	WHATSAPP_KEYS_TABLE,
+} from "./storage.js";
+import { StreamManager } from "./streaming.js";
 import type {
 	AgentIdentity,
 	ChannelCommand,
@@ -38,9 +50,6 @@ import type {
 	WOPRPlugin,
 	WOPRPluginContext,
 } from "./types.js";
-import { type RetryConfig, DEFAULT_RETRY_CONFIG, withRetry } from "./retry.js";
-import { ReactionStateMachine, DEFAULT_REACTION_EMOJIS } from "./reactions.js";
-import { StreamManager } from "./streaming.js";
 import {
 	createWhatsAppWebMCPExtension,
 	type WhatsAppWebMCPExtension,
@@ -48,20 +57,20 @@ import {
 
 // Media types that WhatsApp supports for incoming messages
 const MEDIA_MESSAGE_TYPES = [
-  "imageMessage",
-  "documentMessage",
-  "audioMessage",
-  "videoMessage",
-  "stickerMessage",
+	"imageMessage",
+	"documentMessage",
+	"audioMessage",
+	"videoMessage",
+	"stickerMessage",
 ] as const;
 
 // WhatsApp media size limits (bytes)
 const MEDIA_SIZE_LIMITS: Record<string, number> = {
-  image: 16 * 1024 * 1024,    // 16 MB
-  video: 64 * 1024 * 1024,    // 64 MB
-  audio: 16 * 1024 * 1024,    // 16 MB
-  document: 100 * 1024 * 1024, // 100 MB
-  sticker: 500 * 1024,         // 500 KB
+	image: 16 * 1024 * 1024, // 16 MB
+	video: 64 * 1024 * 1024, // 64 MB
+	audio: 16 * 1024 * 1024, // 16 MB
+	document: 100 * 1024 * 1024, // 100 MB
+	sticker: 500 * 1024, // 500 KB
 };
 
 // WhatsApp-specific types
@@ -121,6 +130,7 @@ let socket: WASocket | null = null;
 let ctx: WOPRPluginContext | null = null;
 let config: WhatsAppConfig = {};
 let agentIdentity: AgentIdentity = { name: "WOPR", emoji: "👀" };
+let storage: PluginStorageAPI | null = null;
 const contacts: Map<string, Contact> = new Map();
 const groups: Map<string, GroupMetadata> = new Map();
 const messageCache: Map<string, WhatsAppMessage> = new Map();
@@ -142,7 +152,10 @@ const TYPING_REFRESH_MS = 5000;
 const activeTypingIntervals: Set<NodeJS.Timeout> = new Set();
 
 // Ref-counting per jid to handle concurrent typing indicators
-const typingRefCounts: Map<string, { count: number; interval: NodeJS.Timeout }> = new Map();
+const typingRefCounts: Map<
+	string,
+	{ count: number; interval: NodeJS.Timeout }
+> = new Map();
 
 // ============================================================================
 // Channel Provider (cross-plugin command/parser registration)
@@ -215,27 +228,34 @@ const WOPR_HOME =
 const ATTACHMENTS_DIR = path.join(WOPR_HOME, "attachments", "whatsapp");
 
 // Maximum download size (default 100 MB, configurable via env)
-const MAX_MEDIA_BYTES = Number(process.env.WOPR_WA_MAX_MEDIA_BYTES) || 100 * 1024 * 1024;
+const MAX_MEDIA_BYTES =
+	Number(process.env.WOPR_WA_MAX_MEDIA_BYTES) || 100 * 1024 * 1024;
 
 /** Return true if `filePath` resolves inside `allowedDir` (realpath check). */
-async function isInsideDir(filePath: string, allowedDir: string): Promise<boolean> {
-  try {
-    const resolvedFile = await realpath(filePath);
-    const resolvedDir = await realpath(allowedDir);
-    return resolvedFile.startsWith(resolvedDir + path.sep) || resolvedFile === resolvedDir;
-  } catch {
-    return false;
-  }
+async function isInsideDir(
+	filePath: string,
+	allowedDir: string,
+): Promise<boolean> {
+	try {
+		const resolvedFile = await realpath(filePath);
+		const resolvedDir = await realpath(allowedDir);
+		return (
+			resolvedFile.startsWith(resolvedDir + path.sep) ||
+			resolvedFile === resolvedDir
+		);
+	} catch {
+		return false;
+	}
 }
 
 /** Sanitize a filename: strip path separators, control chars, and fallback to a hash. */
 export function sanitizeFilename(name: string): string {
-  // Remove anything that isn't alphanumeric, dot, dash, or underscore
-  const clean = name.replace(/[^a-zA-Z0-9._-]/g, "_");
-  if (!clean || clean === "." || clean === "..") {
-    return `file_${Date.now()}`;
-  }
-  return clean;
+	// Remove anything that isn't alphanumeric, dot, dash, or underscore
+	const clean = name.replace(/[^a-zA-Z0-9._-]/g, "_");
+	if (!clean || clean === "." || clean === "..") {
+		return `file_${Date.now()}`;
+	}
+	return clean;
 }
 
 // Initialize winston logger
@@ -319,7 +339,13 @@ export const configSchema: ConfigSchema = {
 			default: false,
 			description: "Enable detailed Baileys logging",
 		},
-		{ name: "pairingRequests", type: "object", label: "Pairing Requests", hidden: true, default: {} } as ConfigField,
+		{
+			name: "pairingRequests",
+			type: "object",
+			label: "Pairing Requests",
+			hidden: true,
+			default: {},
+		} as ConfigField,
 	],
 };
 
@@ -345,6 +371,13 @@ function getAuthDir(accountId: string): string {
 }
 
 async function hasCredentials(accountId: string): Promise<boolean> {
+	// Check Storage API first
+	if (storage) {
+		const val = await storage.get(WHATSAPP_CREDS_TABLE, accountId);
+		if (val != null) return true;
+	}
+
+	// Fallback: check filesystem
 	const authDir = getAuthDir(accountId);
 	const credsPath = path.join(authDir, "creds.json");
 
@@ -399,6 +432,66 @@ function maybeRestoreCredsFromBackup(authDir: string): void {
 		}
 	} catch {
 		// Ignore
+	}
+}
+
+/**
+ * Migrate legacy filesystem-based auth state into the Storage API.
+ * Runs once per account — if creds already exist in storage, it's a no-op.
+ * After successful migration, renames the legacy dir to `.migrated`.
+ */
+async function maybeRunMigration(accountId: string): Promise<void> {
+	if (!storage) return;
+
+	// Skip if storage already has creds for this account
+	const existing = await storage.get(WHATSAPP_CREDS_TABLE, accountId);
+	if (existing != null) return;
+
+	const authDir = getAuthDir(accountId);
+	const credsPath = path.join(authDir, "creds.json");
+
+	const credsRaw = readCredsJsonRaw(credsPath);
+	if (!credsRaw) return; // No legacy creds to migrate
+
+	try {
+		const creds = JSON.parse(credsRaw);
+		// Serialize through BufferJSON to preserve Buffer instances
+		const { BufferJSON: BJ } = require("@whiskeysockets/baileys");
+		const serialized = JSON.parse(JSON.stringify(creds, BJ.replacer));
+		await storage.put(WHATSAPP_CREDS_TABLE, accountId, serialized);
+		logger.info(`Migrated creds for account ${accountId} to Storage API`);
+
+		// Migrate signal key files (anything that isn't creds.json or .bak)
+		const fsSync = require("node:fs");
+		const entries = fsSync.readdirSync(authDir) as string[];
+		for (const entry of entries) {
+			if (entry === "creds.json" || entry === "creds.json.bak") continue;
+			const filePath = path.join(authDir, entry);
+			try {
+				const stat = fsSync.statSync(filePath);
+				if (!stat.isFile()) continue;
+				const raw = fsSync.readFileSync(filePath, "utf-8");
+				const value = JSON.parse(raw);
+				const serializedValue = JSON.parse(JSON.stringify(value, BJ.replacer));
+				// Key files are typically named like "pre-key-1.json"
+				const keyName = entry.replace(/\.json$/, "");
+				const storageKey = `${accountId}:${keyName}`;
+				await storage.put(WHATSAPP_KEYS_TABLE, storageKey, serializedValue);
+			} catch {
+				// Skip files that can't be parsed
+			}
+		}
+
+		// Rename legacy dir to mark migration complete
+		const migratedDir = `${authDir}.migrated`;
+		try {
+			await fs.rename(authDir, migratedDir);
+			logger.info(`Renamed legacy auth dir to ${migratedDir}`);
+		} catch {
+			logger.warn(`Could not rename legacy auth dir ${authDir}`);
+		}
+	} catch (err) {
+		logger.error(`Migration failed for account ${accountId}: ${String(err)}`);
 	}
 }
 
@@ -463,95 +556,110 @@ export function extractText(msg: WAMessage): string | undefined {
 
 // Ensure attachments directory exists
 async function ensureAttachmentsDir(): Promise<void> {
-  try {
-    await fs.mkdir(ATTACHMENTS_DIR, { recursive: true });
-  } catch {
-    // Directory already exists
-  }
+	try {
+		await fs.mkdir(ATTACHMENTS_DIR, { recursive: true });
+	} catch {
+		// Directory already exists
+	}
 }
 
 // Detect if a message contains media and return the media type key
-function getMediaType(msg: WAMessage): (typeof MEDIA_MESSAGE_TYPES)[number] | null {
-  const content = msg.message;
-  if (!content) return null;
+function getMediaType(
+	msg: WAMessage,
+): (typeof MEDIA_MESSAGE_TYPES)[number] | null {
+	const content = msg.message;
+	if (!content) return null;
 
-  const contentType = getContentType(content);
-  if (!contentType) return null;
+	const contentType = getContentType(content);
+	if (!contentType) return null;
 
-  for (const mt of MEDIA_MESSAGE_TYPES) {
-    if (contentType === mt) return mt;
-  }
-  return null;
+	for (const mt of MEDIA_MESSAGE_TYPES) {
+		if (contentType === mt) return mt;
+	}
+	return null;
 }
 
 // Extract declared file size from WhatsApp message metadata (before downloading)
 function getMediaFileLength(msg: WAMessage): number | null {
-  const content = msg.message;
-  if (!content) return null;
+	const content = msg.message;
+	if (!content) return null;
 
-  const sub =
-    content.imageMessage ||
-    content.videoMessage ||
-    content.audioMessage ||
-    content.documentMessage ||
-    content.stickerMessage;
-  if (!sub) return null;
+	const sub =
+		content.imageMessage ||
+		content.videoMessage ||
+		content.audioMessage ||
+		content.documentMessage ||
+		content.stickerMessage;
+	if (!sub) return null;
 
-  const len = (sub as Record<string, unknown>).fileLength;
-  if (typeof len === "number" && len > 0) return len;
-  if (typeof len === "string" && Number(len) > 0) return Number(len);
-  // Baileys may expose fileLength as Long
-  if (len && typeof (len as { toNumber?: () => number }).toNumber === "function") {
-    return (len as { toNumber: () => number }).toNumber();
-  }
-  return null;
+	const len = (sub as Record<string, unknown>).fileLength;
+	if (typeof len === "number" && len > 0) return len;
+	if (typeof len === "string" && Number(len) > 0) return Number(len);
+	// Baileys may expose fileLength as Long
+	if (
+		len &&
+		typeof (len as { toNumber?: () => number }).toNumber === "function"
+	) {
+		return (len as { toNumber: () => number }).toNumber();
+	}
+	return null;
 }
 
 // Download media from a WhatsApp message and save to disk
 // Returns the file path on success, or null on failure
 async function downloadWhatsAppMedia(msg: WAMessage): Promise<string | null> {
-  try {
-    // Pre-download size check from message metadata
-    const declaredSize = getMediaFileLength(msg);
-    if (declaredSize !== null && declaredSize > MAX_MEDIA_BYTES) {
-      logger.warn(`Media too large per metadata (${declaredSize} bytes, limit ${MAX_MEDIA_BYTES}), skipping download`);
-      return null;
-    }
+	try {
+		// Pre-download size check from message metadata
+		const declaredSize = getMediaFileLength(msg);
+		if (declaredSize !== null && declaredSize > MAX_MEDIA_BYTES) {
+			logger.warn(
+				`Media too large per metadata (${declaredSize} bytes, limit ${MAX_MEDIA_BYTES}), skipping download`,
+			);
+			return null;
+		}
 
-    await ensureAttachmentsDir();
+		await ensureAttachmentsDir();
 
-    const ext = sanitizeFilename(extensionForMediaMessage(msg.message!) || "bin");
-    const timestamp = Date.now();
-    const rawSenderId = (msg.key.participant || msg.key.remoteJid || "unknown").split("@")[0];
-    const senderId = sanitizeFilename(rawSenderId);
-    const filename = `${timestamp}-${senderId}.${ext}`;
-    const filepath = path.join(ATTACHMENTS_DIR, filename);
+		const ext = sanitizeFilename(
+			extensionForMediaMessage(msg.message!) || "bin",
+		);
+		const timestamp = Date.now();
+		const rawSenderId = (
+			msg.key.participant ||
+			msg.key.remoteJid ||
+			"unknown"
+		).split("@")[0];
+		const senderId = sanitizeFilename(rawSenderId);
+		const filename = `${timestamp}-${senderId}.${ext}`;
+		const filepath = path.join(ATTACHMENTS_DIR, filename);
 
-    const buffer = await downloadMediaMessage(msg, "buffer", {});
+		const buffer = await downloadMediaMessage(msg, "buffer", {});
 
-    // Post-download safety net: verify actual size
-    if (buffer.length > MAX_MEDIA_BYTES) {
-      logger.warn(`Media too large after download (${buffer.length} bytes, limit ${MAX_MEDIA_BYTES}), skipping`);
-      return null;
-    }
+		// Post-download safety net: verify actual size
+		if (buffer.length > MAX_MEDIA_BYTES) {
+			logger.warn(
+				`Media too large after download (${buffer.length} bytes, limit ${MAX_MEDIA_BYTES}), skipping`,
+			);
+			return null;
+		}
 
-    await fs.writeFile(filepath, buffer);
+		await fs.writeFile(filepath, buffer);
 
-    logger.info(`Media saved: ${filename} (${buffer.length} bytes)`);
-    return filepath;
-  } catch (err) {
-    logger.error(`Failed to download media: ${String(err)}`);
-    return null;
-  }
+		logger.info(`Media saved: ${filename} (${buffer.length} bytes)`);
+		return filepath;
+	} catch (err) {
+		logger.error(`Failed to download media: ${String(err)}`);
+		return null;
+	}
 }
 
 // Determine the media category (image, audio, document, video, sticker)
 export function mediaCategory(mediaType: string): string {
-  if (mediaType === "imageMessage") return "image";
-  if (mediaType === "audioMessage") return "audio";
-  if (mediaType === "videoMessage") return "video";
-  if (mediaType === "stickerMessage") return "sticker";
-  return "document";
+	if (mediaType === "imageMessage") return "image";
+	if (mediaType === "audioMessage") return "audio";
+	if (mediaType === "videoMessage") return "video";
+	if (mediaType === "stickerMessage") return "sticker";
+	return "document";
 }
 
 // Run registered message parsers against an incoming message
@@ -646,9 +754,15 @@ async function handleIncomingMessage(msg: WAMessage): Promise<void> {
 		} else {
 			// Notify user that media could not be processed
 			try {
-				await sendMessageInternal(from, "Sorry, I could not process that media file.", msg);
+				await sendMessageInternal(
+					from,
+					"Sorry, I could not process that media file.",
+					msg,
+				);
 			} catch (notifyErr) {
-				logger.error(`Failed to send media error notification: ${String(notifyErr)}`);
+				logger.error(
+					`Failed to send media error notification: ${String(notifyErr)}`,
+				);
 			}
 		}
 	}
@@ -737,7 +851,9 @@ async function handleIncomingMessage(msg: WAMessage): Promise<void> {
 		// Clean up downloaded media after processing
 		if (mediaPath) {
 			fs.unlink(mediaPath).catch((err) => {
-				logger.warn(`Failed to clean up temp media ${mediaPath}: ${String(err)}`);
+				logger.warn(
+					`Failed to clean up temp media ${mediaPath}: ${String(err)}`,
+				);
 			});
 		}
 	}
@@ -772,7 +888,9 @@ async function sendReactionInternal(
 }
 
 // Parse a !command from message text. Returns null if not a command.
-export function parseCommand(text: string): { name: string; args: string } | null {
+export function parseCommand(
+	text: string,
+): { name: string; args: string } | null {
 	const match = text.match(/^!(\w+)(?:\s+(.*))?$/s);
 	if (!match) return null;
 	return { name: match[1].toLowerCase(), args: (match[2] || "").trim() };
@@ -835,7 +953,11 @@ async function handleTextCommand(
 					rawMsg,
 				);
 			} catch {
-				await sendMessageInternal(waMsg.from, "Failed to compact session.", rawMsg);
+				await sendMessageInternal(
+					waMsg.from,
+					"Failed to compact session.",
+					rawMsg,
+				);
 			}
 			return true;
 		}
@@ -916,7 +1038,11 @@ async function handleTextCommand(
 						rawMsg,
 					);
 				} catch (e) {
-					await sendMessageInternal(waMsg.from, `Failed to switch model: ${e}`, rawMsg);
+					await sendMessageInternal(
+						waMsg.from,
+						`Failed to switch model: ${e}`,
+						rawMsg,
+					);
 				}
 			} else {
 				// Fallback: just store the preference locally
@@ -1026,60 +1152,60 @@ async function handleTextCommand(
 
 // Start typing indicator with auto-refresh and ref-counting
 function startTypingIndicator(jid: string): void {
-  const existing = typingRefCounts.get(jid);
-  if (existing) {
-    existing.count++;
-    return;
-  }
+	const existing = typingRefCounts.get(jid);
+	if (existing) {
+		existing.count++;
+		return;
+	}
 
-  if (!socket) return;
+	if (!socket) return;
 
-  const sock = socket;
-  // Send initial composing presence
-  sock.sendPresenceUpdate("composing", jid).catch(() => {});
+	const sock = socket;
+	// Send initial composing presence
+	sock.sendPresenceUpdate("composing", jid).catch(() => {});
 
-  // Refresh every TYPING_REFRESH_MS since WhatsApp composing status expires
-  const interval = setInterval(() => {
-    // Guard against stale socket reference
-    if (socket !== sock) {
-      clearInterval(interval);
-      activeTypingIntervals.delete(interval);
-      typingRefCounts.delete(jid);
-      return;
-    }
-    sock.sendPresenceUpdate("composing", jid).catch(() => {});
-  }, TYPING_REFRESH_MS);
-  interval.unref();
+	// Refresh every TYPING_REFRESH_MS since WhatsApp composing status expires
+	const interval = setInterval(() => {
+		// Guard against stale socket reference
+		if (socket !== sock) {
+			clearInterval(interval);
+			activeTypingIntervals.delete(interval);
+			typingRefCounts.delete(jid);
+			return;
+		}
+		sock.sendPresenceUpdate("composing", jid).catch(() => {});
+	}, TYPING_REFRESH_MS);
+	interval.unref();
 
-  activeTypingIntervals.add(interval);
-  typingRefCounts.set(jid, { count: 1, interval });
+	activeTypingIntervals.add(interval);
+	typingRefCounts.set(jid, { count: 1, interval });
 }
 
 // Stop typing indicator with ref-counting
 function stopTypingIndicator(jid: string): void {
-  const existing = typingRefCounts.get(jid);
-  if (!existing) return;
+	const existing = typingRefCounts.get(jid);
+	if (!existing) return;
 
-  existing.count--;
-  if (existing.count > 0) return;
+	existing.count--;
+	if (existing.count > 0) return;
 
-  // Last reference — actually stop
-  clearInterval(existing.interval);
-  activeTypingIntervals.delete(existing.interval);
-  typingRefCounts.delete(jid);
+	// Last reference — actually stop
+	clearInterval(existing.interval);
+	activeTypingIntervals.delete(existing.interval);
+	typingRefCounts.delete(jid);
 
-  if (socket) {
-    socket.sendPresenceUpdate("paused", jid).catch(() => {});
-  }
+	if (socket) {
+		socket.sendPresenceUpdate("paused", jid).catch(() => {});
+	}
 }
 
 // Clear all active typing intervals (for shutdown/logout)
 function clearAllTypingIntervals(): void {
-  for (const interval of activeTypingIntervals) {
-    clearInterval(interval);
-  }
-  activeTypingIntervals.clear();
-  typingRefCounts.clear();
+	for (const interval of activeTypingIntervals) {
+		clearInterval(interval);
+	}
+	activeTypingIntervals.clear();
+	typingRefCounts.clear();
 }
 
 // Inject message to WOPR
@@ -1145,7 +1271,11 @@ async function injectMessage(
 	startTypingIndicator(waMsg.from);
 
 	try {
-		const response = await ctx.inject(sessionKey, messageWithPrefix, injectOptions);
+		const response = await ctx.inject(
+			sessionKey,
+			messageWithPrefix,
+			injectOptions,
+		);
 
 		// Finalize the stream — returns true if content was streamed progressively
 		const didStream = await streamManager.finalize(jid);
@@ -1173,10 +1303,7 @@ async function injectMessage(
 }
 
 // Handle streaming response chunks
-function handleStreamChunk(
-	msg: StreamMessage,
-	jid: string,
-): void {
+function handleStreamChunk(msg: StreamMessage, jid: string): void {
 	const stream = streamManager.get(jid);
 	if (!stream) return;
 
@@ -1184,7 +1311,10 @@ function handleStreamChunk(
 	let textContent = "";
 	if (msg.type === "text" && msg.content) {
 		textContent = msg.content;
-	} else if ((msg as any).type === "assistant" && (msg as any).message?.content) {
+	} else if (
+		(msg as any).type === "assistant" &&
+		(msg as any).message?.content
+	) {
 		const content = (msg as any).message.content;
 		if (Array.isArray(content)) {
 			textContent = content.map((c: any) => c.text || "").join("");
@@ -1199,7 +1329,11 @@ function handleStreamChunk(
 }
 
 // Send a text message to WhatsApp, optionally quoting the triggering message (with retry)
-async function sendMessageInternal(to: string, text: string, quoted?: WAMessage): Promise<void> {
+async function sendMessageInternal(
+	to: string,
+	text: string,
+	quoted?: WAMessage,
+): Promise<void> {
 	if (!socket) {
 		throw new Error("WhatsApp not connected");
 	}
@@ -1222,7 +1356,9 @@ async function sendMessageInternal(to: string, text: string, quoted?: WAMessage)
 				} catch (err) {
 					if (i === 0 && quoted) {
 						// Quoted message may have been deleted or expired; retry without quoting
-						logger.warn(`Failed to send with quote, retrying without: ${String(err)}`);
+						logger.warn(
+							`Failed to send with quote, retrying without: ${String(err)}`,
+						);
 						await socket.sendMessage(jid, content);
 					} else {
 						throw err;
@@ -1237,103 +1373,142 @@ async function sendMessageInternal(to: string, text: string, quoted?: WAMessage)
 }
 
 // Send a media file to WhatsApp
-async function sendMediaInternal(to: string, filePath: string, caption?: string): Promise<void> {
-  if (!socket) {
-    throw new Error("WhatsApp not connected");
-  }
+async function sendMediaInternal(
+	to: string,
+	filePath: string,
+	caption?: string,
+): Promise<void> {
+	if (!socket) {
+		throw new Error("WhatsApp not connected");
+	}
 
-  // Verify file exists and is readable before proceeding (finding 8)
-  try {
-    await fs.access(filePath);
-  } catch {
-    throw new Error(`File not found or not readable: ${filePath}`);
-  }
+	// Verify file exists and is readable before proceeding (finding 8)
+	try {
+		await fs.access(filePath);
+	} catch {
+		throw new Error(`File not found or not readable: ${filePath}`);
+	}
 
-  const jid = toJid(to);
-  const ext = path.extname(filePath).toLowerCase();
-  const stat = await fs.stat(filePath);
+	const jid = toJid(to);
+	const ext = path.extname(filePath).toLowerCase();
+	const stat = await fs.stat(filePath);
 
-  // Enforce outbound file size limit
-  if (stat.size > MAX_MEDIA_BYTES) {
-    throw new Error(`File too large to send (${stat.size} bytes, limit ${MAX_MEDIA_BYTES})`);
-  }
+	// Enforce outbound file size limit
+	if (stat.size > MAX_MEDIA_BYTES) {
+		throw new Error(
+			`File too large to send (${stat.size} bytes, limit ${MAX_MEDIA_BYTES})`,
+		);
+	}
 
-  const buffer = await fs.readFile(filePath);
+	const buffer = await fs.readFile(filePath);
 
-  // Determine media type from extension
-  const imageExts = [".jpg", ".jpeg", ".png", ".gif", ".webp"];
-  const audioExts = [".mp3", ".ogg", ".m4a", ".wav", ".aac", ".opus"];
-  const videoExts = [".mp4", ".mkv", ".avi", ".mov", ".3gp"];
+	// Determine media type from extension
+	const imageExts = [".jpg", ".jpeg", ".png", ".gif", ".webp"];
+	const audioExts = [".mp3", ".ogg", ".m4a", ".wav", ".aac", ".opus"];
+	const videoExts = [".mp4", ".mkv", ".avi", ".mov", ".3gp"];
 
-  let content: AnyMessageContent;
+	let content: AnyMessageContent;
 
-  if (imageExts.includes(ext)) {
-    if (stat.size > MEDIA_SIZE_LIMITS.image) {
-      logger.warn(`Image too large (${stat.size} bytes), sending as document`);
-      content = { document: buffer, mimetype: "application/octet-stream", fileName: path.basename(filePath), caption };
-    } else {
-      content = { image: buffer, caption };
-    }
-  } else if (audioExts.includes(ext)) {
-    if (stat.size > MEDIA_SIZE_LIMITS.audio) {
-      logger.warn(`Audio too large (${stat.size} bytes), sending as document`);
-      content = { document: buffer, mimetype: "application/octet-stream", fileName: path.basename(filePath), caption };
-    } else {
-      content = { audio: buffer, mimetype: ext === ".ogg" || ext === ".opus" ? "audio/ogg; codecs=opus" : "audio/mpeg", ptt: ext === ".ogg" || ext === ".opus" };
-    }
-  } else if (videoExts.includes(ext)) {
-    if (stat.size > MEDIA_SIZE_LIMITS.video) {
-      logger.warn(`Video too large (${stat.size} bytes), sending as document`);
-      content = { document: buffer, mimetype: "application/octet-stream", fileName: path.basename(filePath), caption };
-    } else {
-      content = { video: buffer, caption };
-    }
-  } else {
-    // Default: send as document
-    content = { document: buffer, mimetype: "application/octet-stream", fileName: path.basename(filePath), caption };
-  }
+	if (imageExts.includes(ext)) {
+		if (stat.size > MEDIA_SIZE_LIMITS.image) {
+			logger.warn(`Image too large (${stat.size} bytes), sending as document`);
+			content = {
+				document: buffer,
+				mimetype: "application/octet-stream",
+				fileName: path.basename(filePath),
+				caption,
+			};
+		} else {
+			content = { image: buffer, caption };
+		}
+	} else if (audioExts.includes(ext)) {
+		if (stat.size > MEDIA_SIZE_LIMITS.audio) {
+			logger.warn(`Audio too large (${stat.size} bytes), sending as document`);
+			content = {
+				document: buffer,
+				mimetype: "application/octet-stream",
+				fileName: path.basename(filePath),
+				caption,
+			};
+		} else {
+			content = {
+				audio: buffer,
+				mimetype:
+					ext === ".ogg" || ext === ".opus"
+						? "audio/ogg; codecs=opus"
+						: "audio/mpeg",
+				ptt: ext === ".ogg" || ext === ".opus",
+			};
+		}
+	} else if (videoExts.includes(ext)) {
+		if (stat.size > MEDIA_SIZE_LIMITS.video) {
+			logger.warn(`Video too large (${stat.size} bytes), sending as document`);
+			content = {
+				document: buffer,
+				mimetype: "application/octet-stream",
+				fileName: path.basename(filePath),
+				caption,
+			};
+		} else {
+			content = { video: buffer, caption };
+		}
+	} else {
+		// Default: send as document
+		content = {
+			document: buffer,
+			mimetype: "application/octet-stream",
+			fileName: path.basename(filePath),
+			caption,
+		};
+	}
 
-  await withRetry(
-    () => {
-      if (!socket) throw new Error("WhatsApp not connected");
-      return socket.sendMessage(jid, content);
-    },
-    `sendMedia to ${jid}`,
-    logger,
-    config.retry,
-  );
-  logger.info(`Media sent to ${jid}: ${path.basename(filePath)}`);
+	await withRetry(
+		() => {
+			if (!socket) throw new Error("WhatsApp not connected");
+			return socket.sendMessage(jid, content);
+		},
+		`sendMedia to ${jid}`,
+		logger,
+		config.retry,
+	);
+	logger.info(`Media sent to ${jid}: ${path.basename(filePath)}`);
 }
 
 // Pattern to detect file paths in WOPR responses (e.g., "[File: /path/to/file]")
 const FILE_PATH_PATTERN = /\[(?:File|Media|Image|Attachment):\s*([^\]]+)\]/gi;
 
 // Send a response that may contain text and/or media file references
-async function sendResponse(to: string, response: string, quoted?: WAMessage): Promise<void> {
-  // Extract any file paths from the response
-  const filePaths: string[] = [];
-  let textOnly = response.replace(FILE_PATH_PATTERN, (_match, filePath: string) => {
-    filePaths.push(filePath.trim());
-    return "";
-  }).trim();
+async function sendResponse(
+	to: string,
+	response: string,
+	quoted?: WAMessage,
+): Promise<void> {
+	// Extract any file paths from the response
+	const filePaths: string[] = [];
+	const textOnly = response
+		.replace(FILE_PATH_PATTERN, (_match, filePath: string) => {
+			filePaths.push(filePath.trim());
+			return "";
+		})
+		.trim();
 
-  // Send text portion if any
-  if (textOnly) {
-    await sendMessageInternal(to, textOnly, quoted);
-  }
+	// Send text portion if any
+	if (textOnly) {
+		await sendMessageInternal(to, textOnly, quoted);
+	}
 
-  // Send each media file -- ONLY if it resides inside ATTACHMENTS_DIR (finding 1: prevent file exfiltration)
-  for (const fp of filePaths) {
-    try {
-      if (!(await isInsideDir(fp, ATTACHMENTS_DIR))) {
-        logger.warn(`Blocked file send outside attachments directory: ${fp}`);
-        continue;
-      }
-      await sendMediaInternal(to, fp);
-    } catch {
-      logger.warn(`Referenced file not found or not sendable, skipping: ${fp}`);
-    }
-  }
+	// Send each media file -- ONLY if it resides inside ATTACHMENTS_DIR (finding 1: prevent file exfiltration)
+	for (const fp of filePaths) {
+		try {
+			if (!(await isInsideDir(fp, ATTACHMENTS_DIR))) {
+				logger.warn(`Blocked file send outside attachments directory: ${fp}`);
+				continue;
+			}
+			await sendMediaInternal(to, fp);
+		} catch {
+			logger.warn(`Referenced file not found or not sendable, skipping: ${fp}`);
+		}
+	}
 }
 
 export function chunkMessage(text: string, maxLength: number): string[] {
@@ -1358,12 +1533,27 @@ export function chunkMessage(text: string, maxLength: number): string[] {
 
 // Create and start Baileys socket
 async function createSocket(
-	authDir: string,
+	accountId: string,
 	onQr?: (qr: string) => void,
 ): Promise<WASocket> {
-	maybeRestoreCredsFromBackup(authDir);
+	let state: AuthenticationState;
+	let saveCreds: () => Promise<void>;
 
-	const { state, saveCreds } = await useMultiFileAuthState(authDir);
+	if (storage) {
+		// Use Storage API-backed auth state (with migration from filesystem)
+		await maybeRunMigration(accountId);
+		const result = await useStorageAuthState(storage, accountId);
+		state = result.state;
+		saveCreds = result.saveCreds;
+	} else {
+		// Fallback: filesystem-based auth state
+		const authDir = getAuthDir(accountId);
+		maybeRestoreCredsFromBackup(authDir);
+		const result = await useMultiFileAuthState(authDir);
+		state = result.state;
+		saveCreds = result.saveCreds;
+	}
+
 	const { version } = await fetchLatestBaileysVersion();
 
 	// Create silent logger if not verbose
@@ -1449,9 +1639,11 @@ export async function login(): Promise<void> {
 	}
 
 	const accountId = config.accountId || "default";
-	const authDir = getAuthDir(accountId);
 
-	await ensureAuthDir(accountId);
+	// Ensure filesystem auth dir exists (needed for fallback mode)
+	if (!storage) {
+		await ensureAuthDir(accountId);
+	}
 
 	console.log(`\n📱 WhatsApp Login for account: ${accountId}`);
 	console.log(
@@ -1459,7 +1651,7 @@ export async function login(): Promise<void> {
 	);
 
 	return new Promise((resolve, reject) => {
-		createSocket(authDir, (qr: string) => {
+		createSocket(accountId, (qr: string) => {
 			qrcode.generate(qr, { small: true });
 		})
 			.then((sock) => {
@@ -1492,7 +1684,25 @@ export async function logout(): Promise<void> {
 		socket = null;
 	}
 
-	// Clear credentials
+	// Clear credentials from Storage API
+	if (storage) {
+		try {
+			await storage.delete(WHATSAPP_CREDS_TABLE, accountId);
+			// Clean up all signal keys for this account
+			const allKeys = await storage.list(WHATSAPP_KEYS_TABLE);
+			const prefix = `${accountId}:`;
+			for (const entry of allKeys) {
+				const key = (entry as { key?: string })?.key;
+				if (key?.startsWith(prefix)) {
+					await storage.delete(WHATSAPP_KEYS_TABLE, key);
+				}
+			}
+		} catch (err) {
+			logger?.warn?.(`Failed to clear storage on logout: ${String(err)}`);
+		}
+	}
+
+	// Clear legacy filesystem credentials
 	const authDir = getAuthDir(accountId);
 	try {
 		await fs.rm(authDir, { recursive: true, force: true });
@@ -1506,26 +1716,27 @@ export async function logout(): Promise<void> {
 // Start the WhatsApp session (called from init if credentials exist)
 async function startSession(): Promise<void> {
 	const accountId = config.accountId || "default";
-	const authDir = getAuthDir(accountId);
-
-	socket = await createSocket(authDir);
+	socket = await createSocket(accountId);
 }
 
 // WebMCP tool declarations (read by wopr-plugin-webui for manifest-driven registration)
 const webmcpTools = [
 	{
 		name: "getWhatsappStatus",
-		description: "Get WhatsApp connection status: connected/disconnected, phone number, and QR pairing state.",
+		description:
+			"Get WhatsApp connection status: connected/disconnected, phone number, and QR pairing state.",
 		annotations: { readOnlyHint: true },
 	},
 	{
 		name: "listWhatsappChats",
-		description: "List active WhatsApp chats including individual and group conversations.",
+		description:
+			"List active WhatsApp chats including individual and group conversations.",
 		annotations: { readOnlyHint: true },
 	},
 	{
 		name: "getWhatsappMessageStats",
-		description: "Get WhatsApp message processing statistics: messages processed, active conversations, and group count.",
+		description:
+			"Get WhatsApp message processing statistics: messages processed, active conversations, and group count.",
 		annotations: { readOnlyHint: true },
 	},
 ];
@@ -1573,6 +1784,18 @@ const plugin: WOPRPlugin = {
 		// Initialize logger first (before any logging)
 		logger = initLogger();
 
+		// Detect Storage API from context
+		const ctxWithStorage = context as unknown as PluginContextWithStorage;
+		if (ctxWithStorage.storage) {
+			storage = ctxWithStorage.storage;
+			storage.register(WHATSAPP_CREDS_TABLE, WHATSAPP_CREDS_SCHEMA);
+			storage.register(WHATSAPP_KEYS_TABLE, WHATSAPP_KEYS_SCHEMA);
+			logger.info("Storage API detected — using for auth state persistence");
+		} else {
+			storage = null;
+			logger.info("Storage API not available — using filesystem fallback");
+		}
+
 		// Register config schema
 		ctx.registerConfigSchema("whatsapp", configSchema);
 
@@ -1601,6 +1824,9 @@ const plugin: WOPRPlugin = {
 			getMessageCount: () => totalMessageCount,
 			getAccountId: () => config.accountId || "default",
 			hasCredentials: () => {
+				// Note: this is a sync check; storage check is async so we
+				// only check filesystem here. The full async hasCredentials()
+				// checks storage first.
 				const accountId = config.accountId || "default";
 				const authDir = getAuthDir(accountId);
 				const credsPath = path.join(authDir, "creds.json");
@@ -1618,9 +1844,12 @@ const plugin: WOPRPlugin = {
 			logger.info("Registered WhatsApp WebMCP extension");
 		}
 
-		// Ensure auth directory exists
 		const accountId = config.accountId || "default";
-		await ensureAuthDir(accountId);
+
+		// Ensure auth directory exists (only needed for filesystem fallback)
+		if (!storage) {
+			await ensureAuthDir(accountId);
+		}
 
 		// Start session if credentials exist
 		if (await hasCredentials(accountId)) {
@@ -1647,7 +1876,9 @@ const plugin: WOPRPlugin = {
 		connectTime = null;
 		totalMessageCount = 0;
 		if (socket) {
-			await socket.logout();
+			// IMPORTANT: Use end() not logout() — logout() permanently unlinks
+			// the device from WhatsApp. We only want to close the connection.
+			socket.end(undefined);
 			socket = null;
 		}
 		registeredCommands.clear();
@@ -1657,23 +1888,23 @@ const plugin: WOPRPlugin = {
 		contacts.clear();
 		groups.clear();
 		sessionOverrides.clear();
+		storage = null;
 		ctx = null;
 	},
 };
 
-export { ReactionStateMachine, DEFAULT_REACTION_EMOJIS } from "./reactions.js";
 export type { ReactionState, SendReactionFn } from "./reactions.js";
-
+export { DEFAULT_REACTION_EMOJIS, ReactionStateMachine } from "./reactions.js";
+export type {
+	AuthContext as WebMCPAuthContext,
+	WebMCPRegistry,
+	WebMCPTool,
+} from "./webmcp-whatsapp.js";
 export { registerWhatsappTools } from "./webmcp-whatsapp.js";
 export type {
-	WebMCPTool,
-	WebMCPRegistry,
-	AuthContext as WebMCPAuthContext,
-} from "./webmcp-whatsapp.js";
-export type {
-	WhatsAppStatusInfo,
 	ChatInfo,
 	WhatsAppMessageStatsInfo,
+	WhatsAppStatusInfo,
 	WhatsAppWebMCPExtension,
 } from "./whatsapp-extension.js";
 

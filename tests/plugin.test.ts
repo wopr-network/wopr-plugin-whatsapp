@@ -13,6 +13,7 @@ vi.mock("@whiskeysockets/baileys", () => ({
     sendMessage: vi.fn(),
     sendPresenceUpdate: vi.fn(),
     logout: vi.fn(),
+    end: vi.fn(),
   })),
   useMultiFileAuthState: vi.fn(async () => ({
     state: { creds: {}, keys: {} },
@@ -457,6 +458,7 @@ describe("reply-to-message support (WOP-135)", () => {
       sendMessage: mockSendMessage,
       sendPresenceUpdate: vi.fn().mockResolvedValue(undefined),
       logout: vi.fn().mockResolvedValue(undefined),
+      end: vi.fn(),
     }));
 
     // Mock fs to provide credentials so startSession is called
