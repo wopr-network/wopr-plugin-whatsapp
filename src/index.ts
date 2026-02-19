@@ -2,6 +2,7 @@
  * WOPR WhatsApp Plugin - Baileys-based WhatsApp Web integration
  */
 
+import fsSync from "node:fs";
 import fs, { realpath } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -22,6 +23,7 @@ import {
 	type WAMessage,
 	type WASocket,
 } from "@whiskeysockets/baileys";
+import pino from "pino";
 import qrcode from "qrcode-terminal";
 import winston from "winston";
 import { useStorageAuthState } from "./auth-state.js";
@@ -406,7 +408,6 @@ async function ensureAuthDir(accountId: string): Promise<void> {
 // Helper to read creds.json safely
 function readCredsJsonRaw(filePath: string): string | null {
 	try {
-		const fsSync = require("node:fs");
 		if (!fsSync.existsSync(filePath)) return null;
 		const stats = fsSync.statSync(filePath);
 		if (!stats.isFile() || stats.size <= 1) return null;
@@ -422,7 +423,6 @@ function maybeRestoreCredsFromBackup(authDir: string): void {
 	const backupPath = path.join(authDir, "creds.json.bak");
 
 	try {
-		const fsSync = require("node:fs");
 		if (!fsSync.existsSync(credsPath) && fsSync.existsSync(backupPath)) {
 			const raw = readCredsJsonRaw(backupPath);
 			if (raw) {
@@ -1576,8 +1576,8 @@ async function createSocket(
 
 	// Create silent logger if not verbose
 	const baileysLogger = config.verbose
-		? require("pino")({ level: "info" })
-		: require("pino")({ level: "silent" });
+		? pino({ level: "info" })
+		: pino({ level: "silent" });
 
 	const sock = makeWASocket({
 		auth: {
@@ -1849,7 +1849,6 @@ const plugin: WOPRPlugin = {
 				const authDir = getAuthDir(accountId);
 				const credsPath = path.join(authDir, "creds.json");
 				try {
-					const fsSync = require("node:fs");
 					return fsSync.existsSync(credsPath);
 				} catch {
 					return false;
