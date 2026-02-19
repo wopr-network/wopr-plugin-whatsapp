@@ -8,6 +8,7 @@ import path from "node:path";
 import {
 	type AnyMessageContent,
 	type AuthenticationState,
+	BufferJSON,
 	type Contact,
 	DisconnectReason,
 	downloadMediaMessage,
@@ -455,24 +456,21 @@ async function maybeRunMigration(accountId: string): Promise<void> {
 
 	try {
 		const creds = JSON.parse(credsRaw);
-		// Serialize through BufferJSON to preserve Buffer instances
-		const { BufferJSON: BJ } = require("@whiskeysockets/baileys");
-		const serialized = JSON.parse(JSON.stringify(creds, BJ.replacer));
-		await storage.put(WHATSAPP_CREDS_TABLE, accountId, serialized);
-		logger.info(`Migrated creds for account ${accountId} to Storage API`);
 
-		// Migrate signal key files (anything that isn't creds.json or .bak)
-		const fsSync = require("node:fs");
-		const entries = fsSync.readdirSync(authDir) as string[];
+		// Migrate signal key files FIRST (anything that isn't creds.json or .bak)
+		const entries = await fs.readdir(authDir);
 		for (const entry of entries) {
 			if (entry === "creds.json" || entry === "creds.json.bak") continue;
 			const filePath = path.join(authDir, entry);
 			try {
-				const stat = fsSync.statSync(filePath);
+				const stat = await fs.stat(filePath);
 				if (!stat.isFile()) continue;
-				const raw = fsSync.readFileSync(filePath, "utf-8");
+				const raw = await fs.readFile(filePath, "utf-8");
 				const value = JSON.parse(raw);
-				const serializedValue = JSON.parse(JSON.stringify(value, BJ.replacer));
+				// Serialize through BufferJSON to preserve Buffer instances
+				const serializedValue = JSON.parse(
+					JSON.stringify(value, BufferJSON.replacer),
+				);
 				// Key files are typically named like "pre-key-1.json"
 				const keyName = entry.replace(/\.json$/, "");
 				const storageKey = `${accountId}:${keyName}`;
@@ -481,6 +479,13 @@ async function maybeRunMigration(accountId: string): Promise<void> {
 				// Skip files that can't be parsed
 			}
 		}
+
+		// Write creds LAST — this is the "migration complete" marker.
+		// If we crash before this point, migration will re-run on next startup
+		// and re-migrate any keys that were successfully written, which is safe.
+		const serialized = JSON.parse(JSON.stringify(creds, BufferJSON.replacer));
+		await storage.put(WHATSAPP_CREDS_TABLE, accountId, serialized);
+		logger.info(`Migrated creds for account ${accountId} to Storage API`);
 
 		// Rename legacy dir to mark migration complete
 		const migratedDir = `${authDir}.migrated`;
