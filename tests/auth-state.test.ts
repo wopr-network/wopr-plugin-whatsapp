@@ -4,6 +4,7 @@ import type { PluginStorageAPI, StorageTableSchema } from "../src/storage.js";
 import {
 	BufferJSON,
 	initAuthCreds,
+	proto,
 	type AuthenticationCreds,
 } from "@whiskeysockets/baileys";
 import {
@@ -147,6 +148,33 @@ describe("useStorageAuthState", () => {
 
 		const result = await state.keys.get("pre-key", ["1"]);
 		expect(result["1"]).toBeUndefined();
+	});
+
+	it("should decode app-state-sync-key values through protobuf on get", async () => {
+		const { state } = await useStorageAuthState(storage, accountId);
+
+		// Minimal AppStateSyncKeyData-compatible shape
+		const testKeyData = {
+			keyData: Buffer.from("sync-key-data"),
+			fingerprint: {
+				rawId: 1,
+				currentIndex: 0,
+				deviceIndexes: [],
+			},
+			timestamp: 0,
+		};
+
+		await state.keys.set({
+			"app-state-sync-key": { someKeyId: testKeyData as any },
+		});
+
+		const result = await state.keys.get("app-state-sync-key", ["someKeyId"]);
+
+		expect(result["someKeyId"]).toBeDefined();
+		// The result should be a proto instance (has proto methods)
+		expect(result["someKeyId"]).toBeInstanceOf(
+			proto.Message.AppStateSyncKeyData,
+		);
 	});
 
 	it("should isolate keys by accountId", async () => {

@@ -1704,19 +1704,23 @@ export async function logout(): Promise<void> {
 
 	// Clear credentials from Storage API
 	if (storage) {
+		const s = storage;
 		try {
-			await storage.delete(WHATSAPP_CREDS_TABLE, accountId);
-			// Clean up all signal keys for this account
-			const allKeys = await storage.list(WHATSAPP_KEYS_TABLE);
-			const prefix = `${accountId}:`;
-			for (const entry of allKeys) {
-				const key = (entry as { key?: string })?.key;
-				if (key?.startsWith(prefix)) {
-					await storage.delete(WHATSAPP_KEYS_TABLE, key);
-				}
-			}
+			await s.delete(WHATSAPP_CREDS_TABLE, accountId);
 		} catch (err) {
-			logger?.warn?.(`Failed to clear storage on logout: ${String(err)}`);
+			logger?.warn?.(`Failed to delete creds on logout: ${String(err)}`);
+		}
+		// Clean up all signal keys for this account (always runs, even if creds delete failed)
+		try {
+			const allKeys = await s.list(WHATSAPP_KEYS_TABLE);
+			const prefix = `${accountId}:`;
+			const deletions = allKeys
+				.map((entry) => (entry as { key?: string })?.key)
+				.filter((key): key is string => !!key?.startsWith(prefix))
+				.map((key) => s.delete(WHATSAPP_KEYS_TABLE, key));
+			await Promise.all(deletions);
+		} catch (err) {
+			logger?.warn?.(`Failed to clear signal keys on logout: ${String(err)}`);
 		}
 	}
 

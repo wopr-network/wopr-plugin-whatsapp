@@ -38,11 +38,16 @@ export async function useStorageAuthState(
 
 	const raw = await storage.get(WHATSAPP_CREDS_TABLE, accountId);
 	if (raw) {
-		// Round-trip through JSON so Buffer instances survive storage
-		creds = JSON.parse(
-			JSON.stringify(raw),
-			BufferJSON.reviver,
-		) as AuthenticationCreds;
+		try {
+			// Round-trip through JSON so Buffer instances survive storage
+			creds = JSON.parse(
+				JSON.stringify(raw),
+				BufferJSON.reviver,
+			) as AuthenticationCreds;
+		} catch {
+			// Stored record is corrupt — start fresh rather than hard-failing
+			creds = initAuthCreds();
+		}
 	} else {
 		creds = initAuthCreds();
 	}
@@ -63,12 +68,11 @@ export async function useStorageAuthState(
 			type: T,
 			ids: string[],
 		): Promise<Record<string, SignalDataTypeMap[T]>> => {
-			const result: Record<string, SignalDataTypeMap[T]> = {};
-
-			for (const id of ids) {
-				const key = `${accountId}:${type}-${id}`;
-				const val = await storage.get(WHATSAPP_KEYS_TABLE, key);
-				if (val != null) {
+			const pairs = await Promise.all(
+				ids.map(async (id) => {
+					const key = `${accountId}:${type}-${id}`;
+					const val = await storage.get(WHATSAPP_KEYS_TABLE, key);
+					if (val == null) return null;
 					let deserialized = JSON.parse(
 						JSON.stringify(val),
 						BufferJSON.reviver,
@@ -79,14 +83,16 @@ export async function useStorageAuthState(
 						deserialized =
 							proto.Message.AppStateSyncKeyData.fromObject(deserialized);
 					}
-					result[id] = deserialized as SignalDataTypeMap[T];
-				}
-			}
-
-			return result;
+					return [id, deserialized as SignalDataTypeMap[T]] as const;
+				}),
+			);
+			return Object.fromEntries(
+				pairs.filter((p): p is [string, SignalDataTypeMap[T]] => p !== null),
+			);
 		},
 
 		set: async (data: SignalDataSet): Promise<void> => {
+			const ops: Promise<void>[] = [];
 			for (const [category, entries] of Object.entries(data)) {
 				for (const [id, value] of Object.entries(entries)) {
 					const key = `${accountId}:${category}-${id}`;
@@ -94,12 +100,13 @@ export async function useStorageAuthState(
 						const serialized = JSON.parse(
 							JSON.stringify(value, BufferJSON.replacer),
 						);
-						await storage.put(WHATSAPP_KEYS_TABLE, key, serialized);
+						ops.push(storage.put(WHATSAPP_KEYS_TABLE, key, serialized));
 					} else {
-						await storage.delete(WHATSAPP_KEYS_TABLE, key);
+						ops.push(storage.delete(WHATSAPP_KEYS_TABLE, key));
 					}
 				}
 			}
+			await Promise.all(ops);
 		},
 	};
 

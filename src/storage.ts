@@ -9,7 +9,8 @@ export interface StorageTableSchema {
 
 export interface PluginStorageAPI {
 	register(table: string, schema: StorageTableSchema): void;
-	get(table: string, key: string): Promise<unknown>;
+	/** Returns the stored value, or `null` if the key does not exist. */
+	get(table: string, key: string): Promise<unknown | null>;
 	put(table: string, key: string, value: unknown): Promise<void>;
 	list(table: string): Promise<unknown[]>;
 	delete(table: string, key: string): Promise<void>;
