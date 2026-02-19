@@ -13,9 +13,7 @@
     "@types/node": "^20.0.0",
     "@types/qrcode-terminal": "^0.12.2",
     "typescript": "^5.0.0",
-    "vitest": "^4.0.18",
-    "semantic-release": "^24.0.0",
-    "@wopr-network/semantic-release-config": "^1.0.0"
+    "vitest": "^4.0.18"
   },
   "files": [
     "dist/**/*",
