@@ -374,8 +374,12 @@ function getAuthDir(accountId: string): string {
 async function hasCredentials(accountId: string): Promise<boolean> {
 	// Check Storage API first
 	if (storage) {
-		const val = await storage.get(WHATSAPP_CREDS_TABLE, accountId);
-		if (val != null) return true;
+		try {
+			const val = await storage.get(WHATSAPP_CREDS_TABLE, accountId);
+			if (val != null) return true;
+		} catch {
+			// Storage failed, fall through to filesystem
+		}
 	}
 
 	// Fallback: check filesystem
@@ -458,6 +462,8 @@ async function maybeRunMigration(accountId: string): Promise<void> {
 		const creds = JSON.parse(credsRaw);
 
 		// Migrate signal key files FIRST (anything that isn't creds.json or .bak)
+		// Keys are migrated before creds so creds acts as the "migration complete" marker.
+		// If we crash before writing creds, migration will re-run safely on next startup.
 		const entries = await fs.readdir(authDir);
 		for (const entry of entries) {
 			if (entry === "creds.json" || entry === "creds.json.bak") continue;
@@ -487,13 +493,20 @@ async function maybeRunMigration(accountId: string): Promise<void> {
 		await storage.put(WHATSAPP_CREDS_TABLE, accountId, serialized);
 		logger.info(`Migrated creds for account ${accountId} to Storage API`);
 
-		// Rename legacy dir to mark migration complete
+		// Rename legacy dir to mark migration complete; fall back to removal
 		const migratedDir = `${authDir}.migrated`;
 		try {
 			await fs.rename(authDir, migratedDir);
 			logger.info(`Renamed legacy auth dir to ${migratedDir}`);
 		} catch {
-			logger.warn(`Could not rename legacy auth dir ${authDir}`);
+			logger.warn(`Could not rename legacy auth dir, removing instead`);
+			try {
+				await fs.rm(authDir, { recursive: true, force: true });
+			} catch (rmErr) {
+				logger.warn(
+					`Could not remove legacy auth dir ${authDir}: ${String(rmErr)}`,
+				);
+			}
 		}
 	} catch (err) {
 		logger.error(`Migration failed for account ${accountId}: ${String(err)}`);
