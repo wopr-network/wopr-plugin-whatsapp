@@ -10,7 +10,7 @@
   "description": "WhatsApp plugin for WOPR using Baileys (WhatsApp Web)",
   "devDependencies": {
     "@biomejs/biome": "^2.3.14",
-    "@types/node": "^20.0.0",
+    "@types/node": "^25.3.0",
     "@types/qrcode-terminal": "^0.12.2",
     "typescript": "^5.0.0",
     "vitest": "^4.0.18"
