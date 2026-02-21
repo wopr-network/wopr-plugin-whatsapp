@@ -17,8 +17,7 @@
     "vitest": "^4.0.18"
   },
   "files": [
-    "dist/**/*",
-    "IDENTITY.md"
+    "dist"
   ],
   "keywords": [
     "wopr",
