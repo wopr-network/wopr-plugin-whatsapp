@@ -141,6 +141,7 @@ export function getSessionState(sessionKey: string): SessionState {
 			model: "claude-sonnet-4-20250514",
 		});
 	}
+	// biome-ignore lint/style/noNonNullAssertion: guaranteed to exist — set above if missing
 	return sessionStates.get(sessionKey)!;
 }
 
@@ -154,7 +155,7 @@ const contacts: Map<string, Contact> = new Map();
 const groups: Map<string, GroupMetadata> = new Map();
 const messageCache: Map<string, WhatsAppMessage> = new Map();
 const sessionOverrides: Map<string, string> = new Map();
-const _cleanups: Array<() => void | Promise<void>> = [];
+const cleanups: Array<() => void | Promise<void>> = [];
 
 const noopLogger = {
 	info: (_message: string, ..._args: unknown[]) => {},
@@ -514,8 +515,9 @@ async function maybeRunMigration(accountId: string): Promise<void> {
 }
 
 // Get status code from disconnect error
-function getStatusCode(err: any): number | undefined {
-	return err?.output?.statusCode ?? err?.status;
+function getStatusCode(err: unknown): number | undefined {
+	const e = err as { output?: { statusCode?: number }; status?: number };
+	return e?.output?.statusCode ?? e?.status;
 }
 
 // Convert phone number or JID to JID format
@@ -639,6 +641,7 @@ async function downloadWhatsAppMedia(msg: WAMessage): Promise<string | null> {
 		await ensureAttachmentsDir();
 
 		const ext = sanitizeFilename(
+			// biome-ignore lint/style/noNonNullAssertion: msg.message checked non-null at function entry via getMediaType
 			extensionForMediaMessage(msg.message!) || "bin",
 		);
 		const timestamp = Date.now();
@@ -1011,8 +1014,8 @@ async function handleTextCommand(
 			}
 			const modelChoice = cmd.args.toLowerCase();
 			// Use ctx.setSessionProvider if available, otherwise just track locally
-			const ctxAny = ctx as any;
-			if (typeof ctxAny.setSessionProvider === "function") {
+			const ctxExt = ctx as unknown as Record<string, unknown>;
+			if (typeof ctxExt.setSessionProvider === "function") {
 				try {
 					// Try to resolve model via provider registry (same as Discord plugin)
 					const providerIds = [
@@ -1025,12 +1028,17 @@ async function handleTextCommand(
 					let resolved: { provider: string; id: string; name: string } | null =
 						null;
 					for (const pid of providerIds) {
+						type ProviderEntry = { supportedModels?: string[] };
 						const provider =
-							typeof ctxAny.getProvider === "function"
-								? ctxAny.getProvider(pid)
+							typeof ctxExt.getProvider === "function"
+								? (
+										ctxExt.getProvider as (
+											id: string,
+										) => ProviderEntry | undefined
+									)(pid)
 								: undefined;
 						if (!provider?.supportedModels) continue;
-						for (const modelId of provider.supportedModels as string[]) {
+						for (const modelId of provider.supportedModels) {
 							if (modelId === modelChoice || modelId.includes(modelChoice)) {
 								resolved = { provider: pid, id: modelId, name: modelId };
 								break;
@@ -1046,7 +1054,13 @@ async function handleTextCommand(
 						);
 						return true;
 					}
-					await ctxAny.setSessionProvider(sessionKey, resolved.provider, {
+					await (
+						ctxExt.setSessionProvider as (
+							s: string,
+							p: string,
+							o: Record<string, string>,
+						) => Promise<void>
+					)(sessionKey, resolved.provider, {
 						model: resolved.id,
 					});
 					state.model = resolved.id;
@@ -1104,11 +1118,13 @@ async function handleTextCommand(
 		}
 
 		case "cancel": {
-			const ctxAny2 = ctx as any;
+			const ctxExt2 = ctx as unknown as Record<string, unknown>;
 			let cancelled = false;
-			if (typeof ctxAny2.cancelInject === "function") {
+			if (typeof ctxExt2.cancelInject === "function") {
 				try {
-					cancelled = ctxAny2.cancelInject(sessionKey);
+					cancelled = (ctxExt2.cancelInject as (s: string) => boolean)(
+						sessionKey,
+					);
 				} catch (e) {
 					getLogger().warn(`cancelInject failed: ${e}`);
 				}
@@ -1329,15 +1345,19 @@ function handleStreamChunk(msg: StreamMessage, jid: string): void {
 	let textContent = "";
 	if (msg.type === "text" && msg.content) {
 		textContent = msg.content;
-	} else if (
-		(msg as any).type === "assistant" &&
-		(msg as any).message?.content
-	) {
-		const content = (msg as any).message.content;
-		if (Array.isArray(content)) {
-			textContent = content.map((c: any) => c.text || "").join("");
-		} else if (typeof content === "string") {
-			textContent = content;
+	} else {
+		// Handle undocumented "assistant" message shape from some WOPR core versions
+		type AssistantMsg = { type: string; message?: { content?: unknown } };
+		const assistantMsg = msg as unknown as AssistantMsg;
+		if (assistantMsg.type === "assistant" && assistantMsg.message?.content) {
+			const content = assistantMsg.message.content;
+			if (Array.isArray(content)) {
+				textContent = content
+					.map((c: unknown) => (c as { text?: string }).text || "")
+					.join("");
+			} else if (typeof content === "string") {
+				textContent = content;
+			}
 		}
 	}
 
@@ -1607,6 +1627,7 @@ async function createSocket(
 	sock.ev.on("creds.update", () => {
 		saveQueue = saveQueue.then(() => saveCreds()).catch(() => {});
 	});
+	cleanups.push(() => sock.ev.removeAllListeners("creds.update"));
 
 	// Handle connection updates
 	sock.ev.on("connection.update", (update) => {
@@ -1633,6 +1654,7 @@ async function createSocket(
 			connectTime = Date.now();
 		}
 	});
+	cleanups.push(() => sock.ev.removeAllListeners("connection.update"));
 
 	// Handle incoming messages
 	sock.ev.on("messages.upsert", (m) => {
@@ -1642,6 +1664,7 @@ async function createSocket(
 			}
 		}
 	});
+	cleanups.push(() => sock.ev.removeAllListeners("messages.upsert"));
 
 	// Handle contacts
 	sock.ev.on("contacts.upsert", (newContacts) => {
@@ -1649,6 +1672,7 @@ async function createSocket(
 			contacts.set(contact.id, contact);
 		}
 	});
+	cleanups.push(() => sock.ev.removeAllListeners("contacts.upsert"));
 
 	// Handle groups
 	sock.ev.on("groups.upsert", (newGroups) => {
@@ -1656,6 +1680,7 @@ async function createSocket(
 			groups.set(group.id, group);
 		}
 	});
+	cleanups.push(() => sock.ev.removeAllListeners("groups.upsert"));
 
 	return sock;
 }
@@ -1673,8 +1698,10 @@ export async function login(): Promise<void> {
 		await ensureAuthDir(accountId);
 	}
 
-	getLogger().info(`WhatsApp Login for account: ${accountId}`);
-	getLogger().info(
+	// Use console directly — login() runs before init(), so ctx is null and
+	// getLogger() returns the noop logger. CLI users need to see this output.
+	console.log(`WhatsApp Login for account: ${accountId}`);
+	console.log(
 		"Scan the QR code with WhatsApp (Linked Devices) when it appears",
 	);
 
@@ -1688,7 +1715,7 @@ export async function login(): Promise<void> {
 				// Wait for connection
 				sock.ev.on("connection.update", (update) => {
 					if (update.connection === "open") {
-						getLogger().info(`WhatsApp connected (account: ${accountId})`);
+						console.log(`WhatsApp connected (account: ${accountId})`);
 						resolve();
 					}
 					if (update.connection === "close") {
@@ -1738,7 +1765,8 @@ export async function logout(): Promise<void> {
 		// Ignore errors
 	}
 
-	getLogger().info(`Logged out from WhatsApp (account: ${accountId})`);
+	// Use console directly — logout() runs before/after init(), ctx may be null.
+	console.log(`Logged out from WhatsApp (account: ${accountId})`);
 }
 
 // Start the WhatsApp session (called from init if credentials exist)
@@ -1915,6 +1943,13 @@ const plugin: WOPRPlugin = {
 			socket.end(undefined);
 			socket = null;
 		}
+		// Run registered socket cleanup functions (removeAllListeners per event)
+		for (const fn of cleanups) {
+			try {
+				await fn();
+			} catch {}
+		}
+		cleanups.length = 0;
 		registeredCommands.clear();
 		registeredParsers.clear();
 		sessionStates.clear();
