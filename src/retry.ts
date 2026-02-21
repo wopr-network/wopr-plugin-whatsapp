@@ -6,7 +6,7 @@
  * when retrying would be futile.
  */
 
-import type winston from "winston";
+import type { PluginLogger } from "@wopr-network/plugin-types";
 
 export interface RetryConfig {
 	/** Maximum number of retry attempts (default 3) */
@@ -166,7 +166,7 @@ export function calculateDelay(
  *
  * @param operation - The async function to execute
  * @param label - Human-readable label for logging (e.g. "sendMessage to 1234@s.whatsapp.net")
- * @param logger - Winston logger instance
+ * @param logger - Plugin logger instance
  * @param config - Retry configuration (uses defaults if not provided)
  * @returns The result of the operation
  * @throws The last error if all retries are exhausted, or immediately for permanent errors
@@ -174,7 +174,7 @@ export function calculateDelay(
 export async function withRetry<T>(
 	operation: () => Promise<T>,
 	label: string,
-	logger: winston.Logger,
+	logger: PluginLogger,
 	config: Partial<RetryConfig> = {},
 ): Promise<T> {
 	const cfg = { ...DEFAULT_RETRY_CONFIG, ...config };

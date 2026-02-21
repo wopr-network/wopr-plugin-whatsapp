@@ -11,7 +11,7 @@
  * automatically replaces the old one).
  */
 
-import type winston from "winston";
+import type { PluginLogger } from "@wopr-network/plugin-types";
 
 /** Valid states in the reaction lifecycle. */
 export type ReactionState = "queued" | "active" | "done" | "error" | "timeout";
@@ -55,14 +55,14 @@ export class ReactionStateMachine {
 	private readonly chatJid: string;
 	private readonly messageId: string;
 	private readonly sendReaction: SendReactionFn;
-	private readonly logger: winston.Logger;
+	private readonly logger: PluginLogger;
 	private readonly emojis: Record<ReactionState, string>;
 
 	constructor(
 		chatJid: string,
 		messageId: string,
 		sendReaction: SendReactionFn,
-		logger: winston.Logger,
+		logger: PluginLogger,
 		emojis: Record<ReactionState, string> = DEFAULT_REACTION_EMOJIS,
 	) {
 		this.chatJid = chatJid;
@@ -79,7 +79,11 @@ export class ReactionStateMachine {
 
 	/** Whether the state machine has reached a terminal state. */
 	get isTerminal(): boolean {
-		return this._state === "done" || this._state === "error" || this._state === "timeout";
+		return (
+			this._state === "done" ||
+			this._state === "error" ||
+			this._state === "timeout"
+		);
 	}
 
 	/**

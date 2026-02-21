@@ -9,7 +9,7 @@
  */
 
 import type { proto, WASocket } from "@whiskeysockets/baileys";
-import type winston from "winston";
+import type { PluginLogger } from "@wopr-network/plugin-types";
 
 /** WhatsApp message character limit */
 export const WHATSAPP_LIMIT = 4096;
@@ -29,7 +29,7 @@ type WAMessageKey = proto.IMessageKey;
 export class WhatsAppMessageStream {
 	private readonly jid: string;
 	private readonly socket: WASocket;
-	private readonly logger: winston.Logger;
+	private readonly logger: PluginLogger;
 
 	private content = "";
 	private messageKey: WAMessageKey | null = null;
@@ -46,7 +46,7 @@ export class WhatsAppMessageStream {
 	/** Whether any content was actually streamed to WhatsApp */
 	private _didStream = false;
 
-	constructor(jid: string, socket: WASocket, logger: winston.Logger) {
+	constructor(jid: string, socket: WASocket, logger: PluginLogger) {
 		this.jid = jid;
 		this.socket = socket;
 		this.logger = logger;
@@ -263,7 +263,7 @@ export class StreamManager {
 	create(
 		jid: string,
 		socket: WASocket,
-		logger: winston.Logger,
+		logger: PluginLogger,
 	): WhatsAppMessageStream {
 		const existing = this.streams.get(jid);
 		if (existing && !existing.isFinalized) {
