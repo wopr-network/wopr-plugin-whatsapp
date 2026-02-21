@@ -1841,6 +1841,7 @@ const plugin: WOPRPlugin = {
 		const parsed = WhatsAppConfigSchema.safeParse(rawConfig);
 		if (!parsed.success) {
 			getLogger().error(`Invalid WhatsApp config: ${parsed.error.message}`);
+			ctx = null; // reset so shutdown() treats us as uninitialized
 			return;
 		}
 		config = parsed.data;
