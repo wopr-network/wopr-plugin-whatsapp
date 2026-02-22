@@ -5,23 +5,23 @@
 
 // Re-export all shared types used by this plugin
 export type {
-  AgentIdentity,
-  ChannelCommand,
-  ChannelCommandContext,
-  ChannelMessageContext,
-  ChannelMessageParser,
-  ChannelProvider,
-  ChannelRef,
-  ConfigSchema,
-  PluginCapability,
-  PluginCategory,
-  PluginInjectOptions,
-  PluginLogger,
-  PluginManifest,
-  StreamMessage,
-  UserProfile,
-  WOPRPlugin,
-  WOPRPluginContext,
+	AgentIdentity,
+	ChannelCommand,
+	ChannelCommandContext,
+	ChannelMessageContext,
+	ChannelMessageParser,
+	ChannelProvider,
+	ChannelRef,
+	ConfigSchema,
+	PluginCapability,
+	PluginCategory,
+	PluginInjectOptions,
+	PluginLogger,
+	PluginManifest,
+	StreamMessage,
+	UserProfile,
+	WOPRPlugin,
+	WOPRPluginContext,
 } from "@wopr-network/plugin-types";
 
 // Import ConfigField so we can extend it
@@ -32,5 +32,5 @@ import type { ConfigField as SharedConfigField } from "@wopr-network/plugin-type
  * config schema (e.g., the pairingRequests field).
  */
 export interface ConfigField extends SharedConfigField {
-  hidden?: boolean;
+	hidden?: boolean;
 }
