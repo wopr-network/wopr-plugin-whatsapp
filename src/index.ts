@@ -27,8 +27,8 @@ import pino from "pino";
 import qrcode from "qrcode-terminal";
 import winston from "winston";
 import { useStorageAuthState } from "./auth-state.js";
-import { DEFAULT_REACTION_EMOJIS, ReactionStateMachine } from "./reactions.js";
-import { DEFAULT_RETRY_CONFIG, type RetryConfig, withRetry } from "./retry.js";
+import { ReactionStateMachine } from "./reactions.js";
+import { type RetryConfig, withRetry } from "./retry.js";
 import type { PluginContextWithStorage, PluginStorageAPI } from "./storage.js";
 import {
 	WHATSAPP_CREDS_SCHEMA,
@@ -1271,7 +1271,7 @@ async function injectMessage(
 	const jid = toJid(waMsg.from);
 
 	// Create a new stream for this chat (interrupts any existing stream)
-	const stream = streamManager.create(jid, socket, logger);
+	const _stream = streamManager.create(jid, socket, logger);
 
 	const injectOptions: PluginInjectOptions = {
 		from: waMsg.sender || waMsg.from,
