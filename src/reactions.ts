@@ -79,7 +79,11 @@ export class ReactionStateMachine {
 
 	/** Whether the state machine has reached a terminal state. */
 	get isTerminal(): boolean {
-		return this._state === "done" || this._state === "error" || this._state === "timeout";
+		return (
+			this._state === "done" ||
+			this._state === "error" ||
+			this._state === "timeout"
+		);
 	}
 
 	/**
