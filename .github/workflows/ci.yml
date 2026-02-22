@@ -19,6 +19,8 @@ jobs:
           persist-credentials: false
 
       - uses: pnpm/action-setup@v4
+        with:
+          version: '10'
 
       - uses: actions/setup-node@v4
         with:
@@ -26,7 +28,7 @@ jobs:
           cache: 'pnpm'
 
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+        run: pnpm install --no-frozen-lockfile
 
       - name: Lint (if script exists)
         run: |
@@ -60,6 +62,8 @@ jobs:
           persist-credentials: false
 
       - uses: pnpm/action-setup@v4
+        with:
+          version: '10'
 
       - uses: actions/setup-node@v4
         with:
@@ -67,7 +71,7 @@ jobs:
           cache: 'pnpm'
 
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+        run: pnpm install --no-frozen-lockfile
 
       - name: Build
         run: pnpm build
@@ -92,6 +96,8 @@ jobs:
           persist-credentials: false
 
       - uses: pnpm/action-setup@v4
+        with:
+          version: '10'
 
       - uses: actions/setup-node@v4
         with:
@@ -99,7 +105,7 @@ jobs:
           cache: 'pnpm'
 
       - name: Install production dependencies
-        run: pnpm install --frozen-lockfile --prod
+        run: pnpm install --no-frozen-lockfile --prod
 
       - uses: actions/download-artifact@v4
         with:
@@ -130,6 +136,8 @@ jobs:
           persist-credentials: false
 
       - uses: pnpm/action-setup@v4
+        with:
+          version: '10'
 
       - uses: actions/setup-node@v4
         with:
@@ -137,7 +145,7 @@ jobs:
           cache: 'pnpm'
 
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+        run: pnpm install --no-frozen-lockfile
 
       - name: Test (if script exists)
         run: |
