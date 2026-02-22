@@ -13,25 +13,25 @@ import type { Contact, GroupMetadata, WASocket } from "@whiskeysockets/baileys";
 // ============================================================================
 
 export interface WhatsAppStatusInfo {
-  connected: boolean;
-  phoneNumber: string | null;
-  qrState: "paired" | "awaiting_scan" | "unavailable";
-  accountId: string;
-  uptimeMs: number | null;
+	connected: boolean;
+	phoneNumber: string | null;
+	qrState: "paired" | "awaiting_scan" | "unavailable";
+	accountId: string;
+	uptimeMs: number | null;
 }
 
 export interface ChatInfo {
-  id: string;
-  name: string;
-  type: "individual" | "group";
-  participantCount: number | null;
+	id: string;
+	name: string;
+	type: "individual" | "group";
+	participantCount: number | null;
 }
 
 export interface WhatsAppMessageStatsInfo {
-  messagesProcessed: number;
-  activeConversations: number;
-  groupCount: number;
-  individualCount: number;
+	messagesProcessed: number;
+	activeConversations: number;
+	groupCount: number;
+	individualCount: number;
 }
 
 // ============================================================================
@@ -39,9 +39,9 @@ export interface WhatsAppMessageStatsInfo {
 // ============================================================================
 
 export interface WhatsAppWebMCPExtension {
-  getStatus: () => WhatsAppStatusInfo;
-  listChats: () => ChatInfo[];
-  getMessageStats: () => WhatsAppMessageStatsInfo;
+	getStatus: () => WhatsAppStatusInfo;
+	listChats: () => ChatInfo[];
+	getMessageStats: () => WhatsAppMessageStatsInfo;
 }
 
 // ============================================================================
@@ -49,103 +49,109 @@ export interface WhatsAppWebMCPExtension {
 // ============================================================================
 
 export interface WhatsAppState {
-  getSocket: () => WASocket | null;
-  getContacts: () => Map<string, Contact>;
-  getGroups: () => Map<string, GroupMetadata>;
-  getSessionKeys: () => string[];
-  getMessageCount: () => number;
-  getAccountId: () => string;
-  hasCredentials: () => boolean;
-  getConnectTime: () => number | null;
+	getSocket: () => WASocket | null;
+	getContacts: () => Map<string, Contact>;
+	getGroups: () => Map<string, GroupMetadata>;
+	getSessionKeys: () => string[];
+	getMessageCount: () => number;
+	getAccountId: () => string;
+	hasCredentials: () => boolean;
+	getConnectTime: () => number | null;
 }
 
 // ============================================================================
 // Factory
 // ============================================================================
 
-export function createWhatsAppWebMCPExtension(state: WhatsAppState): WhatsAppWebMCPExtension {
-  return {
-    getStatus: (): WhatsAppStatusInfo => {
-      const sock = state.getSocket();
-      const hasCreds = state.hasCredentials();
-      const connectTime = state.getConnectTime();
+export function createWhatsAppWebMCPExtension(
+	state: WhatsAppState,
+): WhatsAppWebMCPExtension {
+	return {
+		getStatus: (): WhatsAppStatusInfo => {
+			const sock = state.getSocket();
+			const hasCreds = state.hasCredentials();
+			const connectTime = state.getConnectTime();
 
-      let qrState: WhatsAppStatusInfo["qrState"];
-      if (sock) {
-        qrState = "paired";
-      } else if (hasCreds) {
-        // Has credentials but socket is down -- reconnecting
-        qrState = "paired";
-      } else {
-        qrState = "awaiting_scan";
-      }
+			let qrState: WhatsAppStatusInfo["qrState"];
+			if (sock) {
+				qrState = "paired";
+			} else if (hasCreds) {
+				// Has credentials but socket is down -- reconnecting
+				qrState = "paired";
+			} else {
+				qrState = "awaiting_scan";
+			}
 
-      let phoneNumber: string | null = null;
-      if (sock?.user?.id) {
-        // Baileys user.id format: "1234567890:12@s.whatsapp.net"
-        phoneNumber = sock.user.id.split(":")[0] || sock.user.id.split("@")[0];
-      }
+			let phoneNumber: string | null = null;
+			if (sock?.user?.id) {
+				// Baileys user.id format: "1234567890:12@s.whatsapp.net"
+				phoneNumber = sock.user.id.split(":")[0] || sock.user.id.split("@")[0];
+			}
 
-      return {
-        connected: sock !== null,
-        phoneNumber,
-        qrState,
-        accountId: state.getAccountId(),
-        uptimeMs: connectTime !== null ? Date.now() - connectTime : null,
-      };
-    },
+			return {
+				connected: sock !== null,
+				phoneNumber,
+				qrState,
+				accountId: state.getAccountId(),
+				uptimeMs: connectTime !== null ? Date.now() - connectTime : null,
+			};
+		},
 
-    listChats: (): ChatInfo[] => {
-      const chats: ChatInfo[] = [];
-      const groups = state.getGroups();
-      const contacts = state.getContacts();
+		listChats: (): ChatInfo[] => {
+			const chats: ChatInfo[] = [];
+			const groups = state.getGroups();
+			const contacts = state.getContacts();
 
-      // Add groups
-      for (const [id, group] of groups) {
-        chats.push({
-          id,
-          name: group.subject || id,
-          type: "group",
-          participantCount: group.participants?.length ?? null,
-        });
-      }
+			// Add groups
+			for (const [id, group] of groups) {
+				chats.push({
+					id,
+					name: group.subject || id,
+					type: "group",
+					participantCount: group.participants?.length ?? null,
+				});
+			}
 
-      // Add individual contacts that have interacted (have a name)
-      for (const [id, contact] of contacts) {
-        // Skip group JIDs and status broadcast
-        if (id.endsWith("@g.us") || id === "status@broadcast") continue;
-        const name = contact.notify || contact.name || null;
-        if (!name) continue;
-        chats.push({
-          id,
-          name,
-          type: "individual",
-          participantCount: null,
-        });
-      }
+			// Add individual contacts that have interacted (have a name)
+			for (const [id, contact] of contacts) {
+				// Skip group JIDs and status broadcast
+				if (id.endsWith("@g.us") || id === "status@broadcast") continue;
+				const name = contact.notify || contact.name || null;
+				if (!name) continue;
+				chats.push({
+					id,
+					name,
+					type: "individual",
+					participantCount: null,
+				});
+			}
 
-      return chats;
-    },
+			return chats;
+		},
 
-    getMessageStats: (): WhatsAppMessageStatsInfo => {
-      const sessionKeys = state.getSessionKeys();
-      const groups = state.getGroups();
-      const contacts = state.getContacts();
+		getMessageStats: (): WhatsAppMessageStatsInfo => {
+			const sessionKeys = state.getSessionKeys();
+			const groups = state.getGroups();
+			const contacts = state.getContacts();
 
-      // Count individual contacts (exclude groups and status broadcast)
-      let individualCount = 0;
-      for (const [id, contact] of contacts) {
-        if (!id.endsWith("@g.us") && id !== "status@broadcast" && (contact.notify || contact.name)) {
-          individualCount++;
-        }
-      }
+			// Count individual contacts (exclude groups and status broadcast)
+			let individualCount = 0;
+			for (const [id, contact] of contacts) {
+				if (
+					!id.endsWith("@g.us") &&
+					id !== "status@broadcast" &&
+					(contact.notify || contact.name)
+				) {
+					individualCount++;
+				}
+			}
 
-      return {
-        messagesProcessed: state.getMessageCount(),
-        activeConversations: sessionKeys.length,
-        groupCount: groups.size,
-        individualCount,
-      };
-    },
-  };
+			return {
+				messagesProcessed: state.getMessageCount(),
+				activeConversations: sessionKeys.length,
+				groupCount: groups.size,
+				individualCount,
+			};
+		},
+	};
 }

@@ -25,10 +25,10 @@ import {
 } from "@whiskeysockets/baileys";
 import pino from "pino";
 import qrcode from "qrcode-terminal";
-import winston from "winston";
+import { z } from "zod";
 import { useStorageAuthState } from "./auth-state.js";
-import { DEFAULT_REACTION_EMOJIS, ReactionStateMachine } from "./reactions.js";
-import { DEFAULT_RETRY_CONFIG, type RetryConfig, withRetry } from "./retry.js";
+import { ReactionStateMachine } from "./reactions.js";
+import { withRetry } from "./retry.js";
 import type { PluginContextWithStorage, PluginStorageAPI } from "./storage.js";
 import {
 	WHATSAPP_CREDS_SCHEMA,
@@ -93,20 +93,36 @@ interface WhatsAppMessage {
 	participant?: string;
 }
 
-interface WhatsAppConfig {
-	accountId?: string;
-	authDir?: string;
-	dmPolicy?: "allowlist" | "blocklist" | "open" | "disabled";
-	allowFrom?: string[];
-	selfChatMode?: boolean;
-	ownerNumber?: string;
-	verbose?: boolean;
-	pairingRequests?: Record<
-		string,
-		{ code: string; name: string; requestedAt: number }
-	>;
-	retry?: Partial<RetryConfig>;
-}
+const WhatsAppConfigSchema = z.object({
+	accountId: z.string().default("default"),
+	authDir: z.string().optional(),
+	dmPolicy: z
+		.enum(["allowlist", "blocklist", "open", "disabled"])
+		.default("allowlist"),
+	allowFrom: z.array(z.string()).default([]),
+	selfChatMode: z.boolean().default(false),
+	ownerNumber: z.string().optional(),
+	verbose: z.boolean().default(false),
+	pairingRequests: z
+		.record(
+			z.object({
+				code: z.string(),
+				name: z.string(),
+				requestedAt: z.number(),
+			}),
+		)
+		.default({}),
+	retry: z
+		.object({
+			maxRetries: z.number().optional(),
+			baseDelay: z.number().optional(),
+			maxDelay: z.number().optional(),
+			jitter: z.number().optional(),
+		})
+		.optional(),
+});
+
+type WhatsAppConfig = z.infer<typeof WhatsAppConfigSchema>;
 
 // Per-session state (mirrors Discord plugin's SessionState)
 interface SessionState {
@@ -125,20 +141,33 @@ export function getSessionState(sessionKey: string): SessionState {
 			model: "claude-sonnet-4-20250514",
 		});
 	}
+	// biome-ignore lint/style/noNonNullAssertion: guaranteed to exist — set above if missing
 	return sessionStates.get(sessionKey)!;
 }
 
 // Module-level state
 let socket: WASocket | null = null;
 let ctx: WOPRPluginContext | null = null;
-let config: WhatsAppConfig = {};
+let config: WhatsAppConfig = WhatsAppConfigSchema.parse({});
 let agentIdentity: AgentIdentity = { name: "WOPR", emoji: "👀" };
 let storage: PluginStorageAPI | null = null;
 const contacts: Map<string, Contact> = new Map();
 const groups: Map<string, GroupMetadata> = new Map();
 const messageCache: Map<string, WhatsAppMessage> = new Map();
 const sessionOverrides: Map<string, string> = new Map();
-let logger: winston.Logger;
+const cleanups: Array<() => void | Promise<void>> = [];
+
+const noopLogger = {
+	info: (_message: string, ..._args: unknown[]) => {},
+	warn: (_message: string, ..._args: unknown[]) => {},
+	error: (_message: string, ..._args: unknown[]) => {},
+	debug: (_message: string, ..._args: unknown[]) => {},
+};
+
+function getLogger(): typeof noopLogger {
+	if (ctx?.log) return ctx.log;
+	return noopLogger;
+}
 
 // WebMCP extension state
 let webmcpExtension: WhatsAppWebMCPExtension | null = null;
@@ -176,7 +205,7 @@ const whatsappChannelProvider: ChannelProvider = {
 
 	registerCommand(cmd: ChannelCommand): void {
 		registeredCommands.set(cmd.name, cmd);
-		logger?.info(`Channel command registered: ${cmd.name}`);
+		getLogger().info(`Channel command registered: ${cmd.name}`);
 	},
 
 	unregisterCommand(name: string): void {
@@ -189,7 +218,7 @@ const whatsappChannelProvider: ChannelProvider = {
 
 	addMessageParser(parser: ChannelMessageParser): void {
 		registeredParsers.set(parser.id, parser);
-		logger?.info(`Message parser registered: ${parser.id}`);
+		getLogger().info(`Message parser registered: ${parser.id}`);
 	},
 
 	removeMessageParser(id: string): void {
@@ -261,36 +290,6 @@ export function sanitizeFilename(name: string): string {
 	return clean;
 }
 
-// Initialize winston logger
-function initLogger(): winston.Logger {
-	return winston.createLogger({
-		level: "debug",
-		format: winston.format.combine(
-			winston.format.timestamp(),
-			winston.format.errors({ stack: true }),
-			winston.format.json(),
-		),
-		defaultMeta: { service: "wopr-plugin-whatsapp" },
-		transports: [
-			new winston.transports.File({
-				filename: path.join(WOPR_HOME, "logs", "whatsapp-plugin-error.log"),
-				level: "error",
-			}),
-			new winston.transports.File({
-				filename: path.join(WOPR_HOME, "logs", "whatsapp-plugin.log"),
-				level: "debug",
-			}),
-			new winston.transports.Console({
-				format: winston.format.combine(
-					winston.format.colorize(),
-					winston.format.simple(),
-				),
-				level: "warn",
-			}),
-		],
-	});
-}
-
 // Config schema for the plugin
 export const configSchema: ConfigSchema = {
 	title: "WhatsApp Integration",
@@ -359,10 +358,10 @@ async function refreshIdentity(): Promise<void> {
 		const identity = await ctx.getAgentIdentity();
 		if (identity) {
 			agentIdentity = { ...agentIdentity, ...identity };
-			logger.info("Identity refreshed:", agentIdentity.name);
+			getLogger().info("Identity refreshed:", agentIdentity.name);
 		}
 	} catch (e) {
-		logger.warn("Failed to refresh identity:", String(e));
+		getLogger().warn("Failed to refresh identity:", String(e));
 	}
 }
 
@@ -429,7 +428,7 @@ function maybeRestoreCredsFromBackup(authDir: string): void {
 				try {
 					JSON.parse(raw); // Validate
 					fsSync.copyFileSync(backupPath, credsPath);
-					logger.info("Restored credentials from backup");
+					getLogger().info("Restored credentials from backup");
 				} catch {
 					// Invalid backup
 				}
@@ -491,31 +490,34 @@ async function maybeRunMigration(accountId: string): Promise<void> {
 		// and re-migrate any keys that were successfully written, which is safe.
 		const serialized = JSON.parse(JSON.stringify(creds, BufferJSON.replacer));
 		await storage.put(WHATSAPP_CREDS_TABLE, accountId, serialized);
-		logger.info(`Migrated creds for account ${accountId} to Storage API`);
+		getLogger().info(`Migrated creds for account ${accountId} to Storage API`);
 
 		// Rename legacy dir to mark migration complete; fall back to removal
 		const migratedDir = `${authDir}.migrated`;
 		try {
 			await fs.rename(authDir, migratedDir);
-			logger.info(`Renamed legacy auth dir to ${migratedDir}`);
+			getLogger().info(`Renamed legacy auth dir to ${migratedDir}`);
 		} catch {
-			logger.warn(`Could not rename legacy auth dir, removing instead`);
+			getLogger().warn(`Could not rename legacy auth dir, removing instead`);
 			try {
 				await fs.rm(authDir, { recursive: true, force: true });
 			} catch (rmErr) {
-				logger.warn(
+				getLogger().warn(
 					`Could not remove legacy auth dir ${authDir}: ${String(rmErr)}`,
 				);
 			}
 		}
 	} catch (err) {
-		logger.error(`Migration failed for account ${accountId}: ${String(err)}`);
+		getLogger().error(
+			`Migration failed for account ${accountId}: ${String(err)}`,
+		);
 	}
 }
 
 // Get status code from disconnect error
-function getStatusCode(err: any): number | undefined {
-	return err?.output?.statusCode ?? err?.status;
+function getStatusCode(err: unknown): number | undefined {
+	const e = err as { output?: { statusCode?: number }; status?: number };
+	return e?.output?.statusCode ?? e?.status;
 }
 
 // Convert phone number or JID to JID format
@@ -630,7 +632,7 @@ async function downloadWhatsAppMedia(msg: WAMessage): Promise<string | null> {
 		// Pre-download size check from message metadata
 		const declaredSize = getMediaFileLength(msg);
 		if (declaredSize !== null && declaredSize > MAX_MEDIA_BYTES) {
-			logger.warn(
+			getLogger().warn(
 				`Media too large per metadata (${declaredSize} bytes, limit ${MAX_MEDIA_BYTES}), skipping download`,
 			);
 			return null;
@@ -639,6 +641,7 @@ async function downloadWhatsAppMedia(msg: WAMessage): Promise<string | null> {
 		await ensureAttachmentsDir();
 
 		const ext = sanitizeFilename(
+			// biome-ignore lint/style/noNonNullAssertion: msg.message checked non-null at function entry via getMediaType
 			extensionForMediaMessage(msg.message!) || "bin",
 		);
 		const timestamp = Date.now();
@@ -655,7 +658,7 @@ async function downloadWhatsAppMedia(msg: WAMessage): Promise<string | null> {
 
 		// Post-download safety net: verify actual size
 		if (buffer.length > MAX_MEDIA_BYTES) {
-			logger.warn(
+			getLogger().warn(
 				`Media too large after download (${buffer.length} bytes, limit ${MAX_MEDIA_BYTES}), skipping`,
 			);
 			return null;
@@ -663,10 +666,10 @@ async function downloadWhatsAppMedia(msg: WAMessage): Promise<string | null> {
 
 		await fs.writeFile(filepath, buffer);
 
-		logger.info(`Media saved: ${filename} (${buffer.length} bytes)`);
+		getLogger().info(`Media saved: ${filename} (${buffer.length} bytes)`);
 		return filepath;
 	} catch (err) {
-		logger.error(`Failed to download media: ${String(err)}`);
+		getLogger().error(`Failed to download media: ${String(err)}`);
 		return null;
 	}
 }
@@ -705,7 +708,7 @@ async function runMessageParsers(waMsg: WhatsAppMessage): Promise<void> {
 				await parser.handler(parserCtx);
 			}
 		} catch (e) {
-			logger.error(`Message parser ${parser.id} error: ${e}`);
+			getLogger().error(`Message parser ${parser.id} error: ${e}`);
 		}
 	}
 }
@@ -728,7 +731,7 @@ async function handleIncomingMessage(msg: WAMessage): Promise<void> {
 
 	// Check DM policy
 	if (!isAllowed(from, isGroup)) {
-		logger.info(`Message from ${from} blocked by DM policy`);
+		getLogger().info(`Message from ${from} blocked by DM policy`);
 		return;
 	}
 
@@ -738,7 +741,7 @@ async function handleIncomingMessage(msg: WAMessage): Promise<void> {
 	// Interrupt any active stream for this chat (user sent a new message mid-stream)
 	const jid = toJid(from);
 	if (streamManager.interrupt(jid)) {
-		logger.info(`Stream interrupted by new message from ${from}`);
+		getLogger().info(`Stream interrupted by new message from ${from}`);
 	}
 
 	const text = extractText(msg);
@@ -778,7 +781,7 @@ async function handleIncomingMessage(msg: WAMessage): Promise<void> {
 					msg,
 				);
 			} catch (notifyErr) {
-				logger.error(
+				getLogger().error(
 					`Failed to send media error notification: ${String(notifyErr)}`,
 				);
 			}
@@ -825,7 +828,7 @@ async function handleIncomingMessage(msg: WAMessage): Promise<void> {
 		from,
 		messageId,
 		sendReactionInternal,
-		logger,
+		getLogger(),
 	);
 
 	// Set queued state when message enters the pipeline
@@ -849,7 +852,7 @@ async function handleIncomingMessage(msg: WAMessage): Promise<void> {
 				await injectMessage(waMessage, sessionKey, reactionSM, msg);
 			}
 		} catch (e) {
-			logger.error(`Command handler error: ${e}`);
+			getLogger().error(`Command handler error: ${e}`);
 			await injectMessage(waMessage, sessionKey, reactionSM, msg);
 		}
 		return;
@@ -869,7 +872,7 @@ async function handleIncomingMessage(msg: WAMessage): Promise<void> {
 		// Clean up downloaded media after processing
 		if (mediaPath) {
 			fs.unlink(mediaPath).catch((err) => {
-				logger.warn(
+				getLogger().warn(
 					`Failed to clean up temp media ${mediaPath}: ${String(err)}`,
 				);
 			});
@@ -900,7 +903,7 @@ async function sendReactionInternal(
 			});
 		},
 		`sendReaction to ${chatJid}`,
-		logger,
+		getLogger(),
 		config.retry,
 	);
 }
@@ -928,7 +931,7 @@ async function handleTextCommand(
 
 	const state = getSessionState(sessionKey);
 
-	logger.info(
+	getLogger().info(
 		`Command received: !${cmd.name} from ${waMsg.sender || waMsg.from}`,
 	);
 
@@ -1011,8 +1014,8 @@ async function handleTextCommand(
 			}
 			const modelChoice = cmd.args.toLowerCase();
 			// Use ctx.setSessionProvider if available, otherwise just track locally
-			const ctxAny = ctx as any;
-			if (typeof ctxAny.setSessionProvider === "function") {
+			const ctxExt = ctx as unknown as Record<string, unknown>;
+			if (typeof ctxExt.setSessionProvider === "function") {
 				try {
 					// Try to resolve model via provider registry (same as Discord plugin)
 					const providerIds = [
@@ -1025,12 +1028,17 @@ async function handleTextCommand(
 					let resolved: { provider: string; id: string; name: string } | null =
 						null;
 					for (const pid of providerIds) {
+						type ProviderEntry = { supportedModels?: string[] };
 						const provider =
-							typeof ctxAny.getProvider === "function"
-								? ctxAny.getProvider(pid)
+							typeof ctxExt.getProvider === "function"
+								? (
+										ctxExt.getProvider as (
+											id: string,
+										) => ProviderEntry | undefined
+									)(pid)
 								: undefined;
 						if (!provider?.supportedModels) continue;
-						for (const modelId of provider.supportedModels as string[]) {
+						for (const modelId of provider.supportedModels) {
 							if (modelId === modelChoice || modelId.includes(modelChoice)) {
 								resolved = { provider: pid, id: modelId, name: modelId };
 								break;
@@ -1046,7 +1054,13 @@ async function handleTextCommand(
 						);
 						return true;
 					}
-					await ctxAny.setSessionProvider(sessionKey, resolved.provider, {
+					await (
+						ctxExt.setSessionProvider as (
+							s: string,
+							p: string,
+							o: Record<string, string>,
+						) => Promise<void>
+					)(sessionKey, resolved.provider, {
 						model: resolved.id,
 					});
 					state.model = resolved.id;
@@ -1104,13 +1118,15 @@ async function handleTextCommand(
 		}
 
 		case "cancel": {
-			const ctxAny2 = ctx as any;
+			const ctxExt2 = ctx as unknown as Record<string, unknown>;
 			let cancelled = false;
-			if (typeof ctxAny2.cancelInject === "function") {
+			if (typeof ctxExt2.cancelInject === "function") {
 				try {
-					cancelled = ctxAny2.cancelInject(sessionKey);
+					cancelled = (ctxExt2.cancelInject as (s: string) => boolean)(
+						sessionKey,
+					);
 				} catch (e) {
-					logger.warn(`cancelInject failed: ${e}`);
+					getLogger().warn(`cancelInject failed: ${e}`);
 				}
 			}
 			if (cancelled) {
@@ -1271,7 +1287,7 @@ async function injectMessage(
 	const jid = toJid(waMsg.from);
 
 	// Create a new stream for this chat (interrupts any existing stream)
-	const stream = streamManager.create(jid, socket, logger);
+	const _stream = streamManager.create(jid, socket, getLogger());
 
 	const injectOptions: PluginInjectOptions = {
 		from: waMsg.sender || waMsg.from,
@@ -1329,15 +1345,19 @@ function handleStreamChunk(msg: StreamMessage, jid: string): void {
 	let textContent = "";
 	if (msg.type === "text" && msg.content) {
 		textContent = msg.content;
-	} else if (
-		(msg as any).type === "assistant" &&
-		(msg as any).message?.content
-	) {
-		const content = (msg as any).message.content;
-		if (Array.isArray(content)) {
-			textContent = content.map((c: any) => c.text || "").join("");
-		} else if (typeof content === "string") {
-			textContent = content;
+	} else {
+		// Handle undocumented "assistant" message shape from some WOPR core versions
+		type AssistantMsg = { type: string; message?: { content?: unknown } };
+		const assistantMsg = msg as unknown as AssistantMsg;
+		if (assistantMsg.type === "assistant" && assistantMsg.message?.content) {
+			const content = assistantMsg.message.content;
+			if (Array.isArray(content)) {
+				textContent = content
+					.map((c: unknown) => (c as { text?: string }).text || "")
+					.join("");
+			} else if (typeof content === "string") {
+				textContent = content;
+			}
 		}
 	}
 
@@ -1374,7 +1394,7 @@ async function sendMessageInternal(
 				} catch (err) {
 					if (i === 0 && quoted) {
 						// Quoted message may have been deleted or expired; retry without quoting
-						logger.warn(
+						getLogger().warn(
 							`Failed to send with quote, retrying without: ${String(err)}`,
 						);
 						await socket.sendMessage(jid, content);
@@ -1384,7 +1404,7 @@ async function sendMessageInternal(
 				}
 			},
 			`sendMessage to ${jid}`,
-			logger,
+			getLogger(),
 			retryConfig,
 		);
 	}
@@ -1429,7 +1449,9 @@ async function sendMediaInternal(
 
 	if (imageExts.includes(ext)) {
 		if (stat.size > MEDIA_SIZE_LIMITS.image) {
-			logger.warn(`Image too large (${stat.size} bytes), sending as document`);
+			getLogger().warn(
+				`Image too large (${stat.size} bytes), sending as document`,
+			);
 			content = {
 				document: buffer,
 				mimetype: "application/octet-stream",
@@ -1441,7 +1463,9 @@ async function sendMediaInternal(
 		}
 	} else if (audioExts.includes(ext)) {
 		if (stat.size > MEDIA_SIZE_LIMITS.audio) {
-			logger.warn(`Audio too large (${stat.size} bytes), sending as document`);
+			getLogger().warn(
+				`Audio too large (${stat.size} bytes), sending as document`,
+			);
 			content = {
 				document: buffer,
 				mimetype: "application/octet-stream",
@@ -1460,7 +1484,9 @@ async function sendMediaInternal(
 		}
 	} else if (videoExts.includes(ext)) {
 		if (stat.size > MEDIA_SIZE_LIMITS.video) {
-			logger.warn(`Video too large (${stat.size} bytes), sending as document`);
+			getLogger().warn(
+				`Video too large (${stat.size} bytes), sending as document`,
+			);
 			content = {
 				document: buffer,
 				mimetype: "application/octet-stream",
@@ -1486,10 +1512,10 @@ async function sendMediaInternal(
 			return socket.sendMessage(jid, content);
 		},
 		`sendMedia to ${jid}`,
-		logger,
+		getLogger(),
 		config.retry,
 	);
-	logger.info(`Media sent to ${jid}: ${path.basename(filePath)}`);
+	getLogger().info(`Media sent to ${jid}: ${path.basename(filePath)}`);
 }
 
 // Pattern to detect file paths in WOPR responses (e.g., "[File: /path/to/file]")
@@ -1519,12 +1545,16 @@ async function sendResponse(
 	for (const fp of filePaths) {
 		try {
 			if (!(await isInsideDir(fp, ATTACHMENTS_DIR))) {
-				logger.warn(`Blocked file send outside attachments directory: ${fp}`);
+				getLogger().warn(
+					`Blocked file send outside attachments directory: ${fp}`,
+				);
 				continue;
 			}
 			await sendMediaInternal(to, fp);
 		} catch {
-			logger.warn(`Referenced file not found or not sendable, skipping: ${fp}`);
+			getLogger().warn(
+				`Referenced file not found or not sendable, skipping: ${fp}`,
+			);
 		}
 	}
 }
@@ -1597,6 +1627,7 @@ async function createSocket(
 	sock.ev.on("creds.update", () => {
 		saveQueue = saveQueue.then(() => saveCreds()).catch(() => {});
 	});
+	cleanups.push(() => sock.ev.removeAllListeners("creds.update"));
 
 	// Handle connection updates
 	sock.ev.on("connection.update", (update) => {
@@ -1609,7 +1640,7 @@ async function createSocket(
 		if (connection === "close") {
 			const status = getStatusCode(lastDisconnect?.error);
 			if (status === DisconnectReason.loggedOut) {
-				logger.error(
+				getLogger().error(
 					"WhatsApp session logged out. Run: wopr channels login whatsapp",
 				);
 			}
@@ -1619,10 +1650,11 @@ async function createSocket(
 		}
 
 		if (connection === "open") {
-			logger.info("WhatsApp Web connected");
+			getLogger().info("WhatsApp Web connected");
 			connectTime = Date.now();
 		}
 	});
+	cleanups.push(() => sock.ev.removeAllListeners("connection.update"));
 
 	// Handle incoming messages
 	sock.ev.on("messages.upsert", (m) => {
@@ -1632,6 +1664,7 @@ async function createSocket(
 			}
 		}
 	});
+	cleanups.push(() => sock.ev.removeAllListeners("messages.upsert"));
 
 	// Handle contacts
 	sock.ev.on("contacts.upsert", (newContacts) => {
@@ -1639,6 +1672,7 @@ async function createSocket(
 			contacts.set(contact.id, contact);
 		}
 	});
+	cleanups.push(() => sock.ev.removeAllListeners("contacts.upsert"));
 
 	// Handle groups
 	sock.ev.on("groups.upsert", (newGroups) => {
@@ -1646,6 +1680,7 @@ async function createSocket(
 			groups.set(group.id, group);
 		}
 	});
+	cleanups.push(() => sock.ev.removeAllListeners("groups.upsert"));
 
 	return sock;
 }
@@ -1663,9 +1698,11 @@ export async function login(): Promise<void> {
 		await ensureAuthDir(accountId);
 	}
 
-	console.log(`\n📱 WhatsApp Login for account: ${accountId}`);
+	// Use console directly — login() runs before init(), so ctx is null and
+	// getLogger() returns the noop logger. CLI users need to see this output.
+	console.log(`WhatsApp Login for account: ${accountId}`);
 	console.log(
-		"Scan the QR code with WhatsApp (Linked Devices) when it appears...\n",
+		"Scan the QR code with WhatsApp (Linked Devices) when it appears",
 	);
 
 	return new Promise((resolve, reject) => {
@@ -1678,7 +1715,7 @@ export async function login(): Promise<void> {
 				// Wait for connection
 				sock.ev.on("connection.update", (update) => {
 					if (update.connection === "open") {
-						console.log(`✅ WhatsApp connected (account: ${accountId})`);
+						console.log(`WhatsApp connected (account: ${accountId})`);
 						resolve();
 					}
 					if (update.connection === "close") {
@@ -1716,7 +1753,7 @@ export async function logout(): Promise<void> {
 				}
 			}
 		} catch (err) {
-			logger?.warn?.(`Failed to clear storage on logout: ${String(err)}`);
+			getLogger().warn(`Failed to clear storage on logout: ${String(err)}`);
 		}
 	}
 
@@ -1728,7 +1765,8 @@ export async function logout(): Promise<void> {
 		// Ignore errors
 	}
 
-	console.log(`✅ Logged out from WhatsApp (account: ${accountId})`);
+	// Use console directly — logout() runs before/after init(), ctx may be null.
+	console.log(`Logged out from WhatsApp (account: ${accountId})`);
 }
 
 // Start the WhatsApp session (called from init if credentials exist)
@@ -1797,10 +1835,16 @@ const plugin: WOPRPlugin = {
 
 	async init(context: WOPRPluginContext): Promise<void> {
 		ctx = context;
-		config = (context.getConfig() || {}) as WhatsAppConfig;
 
-		// Initialize logger first (before any logging)
-		logger = initLogger();
+		// Validate config with zod
+		const rawConfig = context.getConfig() ?? {};
+		const parsed = WhatsAppConfigSchema.safeParse(rawConfig);
+		if (!parsed.success) {
+			getLogger().error(`Invalid WhatsApp config: ${parsed.error.message}`);
+			ctx = null; // reset so shutdown() treats us as uninitialized
+			return;
+		}
+		config = parsed.data;
 
 		// Detect Storage API from context
 		const ctxWithStorage = context as unknown as PluginContextWithStorage;
@@ -1808,10 +1852,12 @@ const plugin: WOPRPlugin = {
 			storage = ctxWithStorage.storage;
 			storage.register(WHATSAPP_CREDS_TABLE, WHATSAPP_CREDS_SCHEMA);
 			storage.register(WHATSAPP_KEYS_TABLE, WHATSAPP_KEYS_SCHEMA);
-			logger.info("Storage API detected — using for auth state persistence");
+			getLogger().info(
+				"Storage API detected — using for auth state persistence",
+			);
 		} else {
 			storage = null;
-			logger.info("Storage API not available — using filesystem fallback");
+			getLogger().info("Storage API not available — using filesystem fallback");
 		}
 
 		// Register config schema
@@ -1824,13 +1870,13 @@ const plugin: WOPRPlugin = {
 		// Register as a channel provider so other plugins can add commands/parsers
 		if (ctx.registerChannelProvider) {
 			ctx.registerChannelProvider(whatsappChannelProvider);
-			logger.info("Registered WhatsApp channel provider");
+			getLogger().info("Registered WhatsApp channel provider");
 		}
 
 		// Register the WhatsApp extension so other plugins can send notifications
 		if (ctx.registerExtension) {
 			ctx.registerExtension("whatsapp", whatsappExtension);
-			logger.info("Registered WhatsApp extension");
+			getLogger().info("Registered WhatsApp extension");
 		}
 
 		// Create and register WebMCP extension for read-only status/chat/stats tools
@@ -1858,7 +1904,7 @@ const plugin: WOPRPlugin = {
 		});
 		if (ctx.registerExtension) {
 			ctx.registerExtension("whatsapp-webmcp", webmcpExtension);
-			logger.info("Registered WhatsApp WebMCP extension");
+			getLogger().info("Registered WhatsApp WebMCP extension");
 		}
 
 		const accountId = config.accountId || "default";
@@ -1870,10 +1916,10 @@ const plugin: WOPRPlugin = {
 
 		// Start session if credentials exist
 		if (await hasCredentials(accountId)) {
-			logger.info("Found existing credentials, starting session...");
+			getLogger().info("Found existing credentials, starting session...");
 			await startSession();
 		} else {
-			logger.info(
+			getLogger().info(
 				"No credentials found. Run 'wopr channels login whatsapp' to connect.",
 			);
 		}
@@ -1898,6 +1944,13 @@ const plugin: WOPRPlugin = {
 			socket.end(undefined);
 			socket = null;
 		}
+		// Run registered socket cleanup functions (removeAllListeners per event)
+		for (const fn of cleanups) {
+			try {
+				await fn();
+			} catch {}
+		}
+		cleanups.length = 0;
 		registeredCommands.clear();
 		registeredParsers.clear();
 		sessionStates.clear();
