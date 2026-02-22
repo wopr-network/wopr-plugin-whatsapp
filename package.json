@@ -32,9 +32,6 @@
   },
   "main": "dist/index.js",
   "name": "@wopr-network/wopr-plugin-whatsapp",
-  "peerDependencies": {
-    "wopr": "^2.0.0"
-  },
   "scripts": {
     "build": "tsc",
     "check": "biome check src/ && tsc --noEmit",
