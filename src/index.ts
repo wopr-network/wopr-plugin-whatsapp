@@ -24,6 +24,7 @@ import {
 import {
 	clearAllSessionState,
 	clearRegisteredCommands,
+	getSessionKeys,
 	initCommands,
 	sessionOverrides,
 } from "./commands.js";
@@ -361,11 +362,7 @@ const plugin: WOPRPlugin = {
 			getSocket: () => socket,
 			getContacts: () => contacts,
 			getGroups: () => groups,
-			getSessionKeys: () => {
-				const { getSessionKeys } =
-					require("./commands.js") as typeof import("./commands.js");
-				return getSessionKeys();
-			},
+			getSessionKeys: () => getSessionKeys(),
 			getMessageCount: () => totalMessageCount,
 			getAccountId: () => config.accountId || "default",
 			hasCredentials: () => {

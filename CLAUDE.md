@@ -16,8 +16,17 @@ npm test          # vitest run
 
 ```
 src/
-  index.ts   # Plugin entry — Baileys connection lifecycle
-  types.ts   # Plugin-local types
+  index.ts              # Plugin entry — thin orchestrator
+  types.ts              # Plugin-local types + re-exports
+  logger.ts             # Winston logger singleton (lazy-initialized)
+  connection.ts         # Baileys socket lifecycle (create, login, logout)
+  credentials.ts        # Auth directory helpers + migration
+  commands.ts           # !command handlers, session state
+  message-handler.ts    # Incoming message pipeline
+  messaging.ts          # Send logic with chunking
+  media.ts              # Media download/send, DM policy, file validation
+  typing.ts             # Typing indicator management
+  channel-provider.ts   # Cross-plugin channel provider + command/parser registry
 ```
 
 ## Key Details

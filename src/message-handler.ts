@@ -8,6 +8,7 @@ import type {
 	WASocket,
 } from "@whiskeysockets/baileys";
 import {
+	getSessionKeys as getCommandSessionKeys,
 	getSessionState,
 	handleTextCommand,
 	sessionOverrides,
@@ -68,10 +69,7 @@ export function getGroupsMap(): Map<string, GroupMetadata> {
 }
 
 export function getSessionKeys(): string[] {
-	// Re-export from commands module
-	const { getSessionKeys: getKeys } =
-		require("./commands.js") as typeof import("./commands.js");
-	return getKeys();
+	return getCommandSessionKeys();
 }
 
 // Run registered message parsers against an incoming message
