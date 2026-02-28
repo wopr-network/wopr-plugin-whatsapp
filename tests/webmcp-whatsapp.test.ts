@@ -1,10 +1,7 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { AuthContext, WebMCPRegistry, WebMCPTool } from "../src/webmcp-whatsapp.js";
 import { registerWhatsappTools } from "../src/webmcp-whatsapp.js";
-import {
-  createWhatsAppWebMCPExtension,
-  type WhatsAppState,
-} from "../src/whatsapp-extension.js";
-import type { WebMCPRegistry, WebMCPTool, AuthContext } from "../src/webmcp-whatsapp.js";
+import { createWhatsAppWebMCPExtension, type WhatsAppState } from "../src/whatsapp-extension.js";
 
 // ============================================================================
 // registerWhatsappTools
@@ -53,13 +50,16 @@ describe("registerWhatsappTools", () => {
     registerWhatsappTools(registry, "/api");
     const auth: AuthContext = {};
 
-    await registered.get("getWhatsappStatus")!.handler({}, auth);
-    expect(fetchSpy).toHaveBeenCalledWith("/api/plugins/whatsapp/status", expect.objectContaining({ headers: expect.objectContaining({ "Content-Type": "application/json" }) }));
+    await registered.get("getWhatsappStatus")?.handler({}, auth);
+    expect(fetchSpy).toHaveBeenCalledWith(
+      "/api/plugins/whatsapp/status",
+      expect.objectContaining({ headers: expect.objectContaining({ "Content-Type": "application/json" }) }),
+    );
 
-    await registered.get("listWhatsappChats")!.handler({}, auth);
+    await registered.get("listWhatsappChats")?.handler({}, auth);
     expect(fetchSpy).toHaveBeenCalledWith("/api/plugins/whatsapp/chats", expect.anything());
 
-    await registered.get("getWhatsappMessageStats")!.handler({}, auth);
+    await registered.get("getWhatsappMessageStats")?.handler({}, auth);
     expect(fetchSpy).toHaveBeenCalledWith("/api/plugins/whatsapp/stats", expect.anything());
 
     fetchSpy.mockRestore();
@@ -72,7 +72,7 @@ describe("registerWhatsappTools", () => {
     registerWhatsappTools(registry);
     const auth: AuthContext = { token: "test-token-123" };
 
-    await registered.get("getWhatsappStatus")!.handler({}, auth);
+    await registered.get("getWhatsappStatus")?.handler({}, auth);
     expect(fetchSpy).toHaveBeenCalledWith(
       expect.any(String),
       expect.objectContaining({
@@ -92,7 +92,7 @@ describe("registerWhatsappTools", () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(mockResponse as Response);
 
     registerWhatsappTools(registry);
-    await expect(registered.get("getWhatsappStatus")!.handler({}, {})).rejects.toThrow("Internal server error");
+    await expect(registered.get("getWhatsappStatus")?.handler({}, {})).rejects.toThrow("Internal server error");
 
     fetchSpy.mockRestore();
   });
@@ -102,7 +102,7 @@ describe("registerWhatsappTools", () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(mockResponse as Response);
 
     registerWhatsappTools(registry, "http://localhost:7437");
-    await registered.get("getWhatsappStatus")!.handler({}, {});
+    await registered.get("getWhatsappStatus")?.handler({}, {});
     expect(fetchSpy).toHaveBeenCalledWith("http://localhost:7437/plugins/whatsapp/status", expect.anything());
 
     fetchSpy.mockRestore();
@@ -143,10 +143,12 @@ describe("createWhatsAppWebMCPExtension", () => {
       const mockSocket = {
         user: { id: "1234567890:12@s.whatsapp.net" },
       };
-      const ext = createWhatsAppWebMCPExtension(makeState({
-        getSocket: () => mockSocket as any,
-        getConnectTime: () => Date.now() - 5000,
-      }));
+      const ext = createWhatsAppWebMCPExtension(
+        makeState({
+          getSocket: () => mockSocket as any,
+          getConnectTime: () => Date.now() - 5000,
+        }),
+      );
       const status = ext.getStatus();
       expect(status.connected).toBe(true);
       expect(status.phoneNumber).toBe("1234567890");
@@ -155,18 +157,22 @@ describe("createWhatsAppWebMCPExtension", () => {
     });
 
     it("returns paired qrState when has credentials but no socket", () => {
-      const ext = createWhatsAppWebMCPExtension(makeState({
-        hasCredentials: () => true,
-      }));
+      const ext = createWhatsAppWebMCPExtension(
+        makeState({
+          hasCredentials: () => true,
+        }),
+      );
       const status = ext.getStatus();
       expect(status.connected).toBe(false);
       expect(status.qrState).toBe("paired");
     });
 
     it("uses custom accountId", () => {
-      const ext = createWhatsAppWebMCPExtension(makeState({
-        getAccountId: () => "work-phone",
-      }));
+      const ext = createWhatsAppWebMCPExtension(
+        makeState({
+          getAccountId: () => "work-phone",
+        }),
+      );
       expect(ext.getStatus().accountId).toBe("work-phone");
     });
   });
@@ -181,9 +187,11 @@ describe("createWhatsAppWebMCPExtension", () => {
       const groups = new Map<string, any>([
         ["group1@g.us", { subject: "Family Chat", participants: [{ id: "a" }, { id: "b" }] }],
       ]);
-      const ext = createWhatsAppWebMCPExtension(makeState({
-        getGroups: () => groups,
-      }));
+      const ext = createWhatsAppWebMCPExtension(
+        makeState({
+          getGroups: () => groups,
+        }),
+      );
       const chats = ext.listChats();
       expect(chats).toHaveLength(1);
       expect(chats[0]).toEqual({
@@ -199,9 +207,11 @@ describe("createWhatsAppWebMCPExtension", () => {
         ["1234@s.whatsapp.net", { id: "1234@s.whatsapp.net", notify: "Alice" }],
         ["5678@s.whatsapp.net", { id: "5678@s.whatsapp.net", name: "Bob" }],
       ]);
-      const ext = createWhatsAppWebMCPExtension(makeState({
-        getContacts: () => contacts,
-      }));
+      const ext = createWhatsAppWebMCPExtension(
+        makeState({
+          getContacts: () => contacts,
+        }),
+      );
       const chats = ext.listChats();
       expect(chats).toHaveLength(2);
       expect(chats[0].type).toBe("individual");
@@ -210,32 +220,32 @@ describe("createWhatsAppWebMCPExtension", () => {
     });
 
     it("excludes contacts without names", () => {
-      const contacts = new Map<string, any>([
-        ["1234@s.whatsapp.net", { id: "1234@s.whatsapp.net" }],
-      ]);
-      const ext = createWhatsAppWebMCPExtension(makeState({
-        getContacts: () => contacts,
-      }));
+      const contacts = new Map<string, any>([["1234@s.whatsapp.net", { id: "1234@s.whatsapp.net" }]]);
+      const ext = createWhatsAppWebMCPExtension(
+        makeState({
+          getContacts: () => contacts,
+        }),
+      );
       expect(ext.listChats()).toHaveLength(0);
     });
 
     it("excludes status@broadcast", () => {
-      const contacts = new Map<string, any>([
-        ["status@broadcast", { id: "status@broadcast", notify: "Status" }],
-      ]);
-      const ext = createWhatsAppWebMCPExtension(makeState({
-        getContacts: () => contacts,
-      }));
+      const contacts = new Map<string, any>([["status@broadcast", { id: "status@broadcast", notify: "Status" }]]);
+      const ext = createWhatsAppWebMCPExtension(
+        makeState({
+          getContacts: () => contacts,
+        }),
+      );
       expect(ext.listChats()).toHaveLength(0);
     });
 
     it("excludes group JIDs from contact list", () => {
-      const contacts = new Map<string, any>([
-        ["group1@g.us", { id: "group1@g.us", notify: "Group Contact" }],
-      ]);
-      const ext = createWhatsAppWebMCPExtension(makeState({
-        getContacts: () => contacts,
-      }));
+      const contacts = new Map<string, any>([["group1@g.us", { id: "group1@g.us", notify: "Group Contact" }]]);
+      const ext = createWhatsAppWebMCPExtension(
+        makeState({
+          getContacts: () => contacts,
+        }),
+      );
       expect(ext.listChats()).toHaveLength(0);
     });
   });
@@ -251,16 +261,20 @@ describe("createWhatsAppWebMCPExtension", () => {
     });
 
     it("reports message count from state", () => {
-      const ext = createWhatsAppWebMCPExtension(makeState({
-        getMessageCount: () => 42,
-      }));
+      const ext = createWhatsAppWebMCPExtension(
+        makeState({
+          getMessageCount: () => 42,
+        }),
+      );
       expect(ext.getMessageStats().messagesProcessed).toBe(42);
     });
 
     it("counts active conversations from session keys", () => {
-      const ext = createWhatsAppWebMCPExtension(makeState({
-        getSessionKeys: () => ["whatsapp-123", "whatsapp-456", "whatsapp-789"],
-      }));
+      const ext = createWhatsAppWebMCPExtension(
+        makeState({
+          getSessionKeys: () => ["whatsapp-123", "whatsapp-456", "whatsapp-789"],
+        }),
+      );
       expect(ext.getMessageStats().activeConversations).toBe(3);
     });
 
@@ -274,10 +288,12 @@ describe("createWhatsAppWebMCPExtension", () => {
         ["2@s.whatsapp.net", { id: "2@s.whatsapp.net" }], // no name -- excluded
         ["status@broadcast", { id: "status@broadcast", notify: "S" }], // excluded
       ]);
-      const ext = createWhatsAppWebMCPExtension(makeState({
-        getGroups: () => groups,
-        getContacts: () => contacts,
-      }));
+      const ext = createWhatsAppWebMCPExtension(
+        makeState({
+          getGroups: () => groups,
+          getContacts: () => contacts,
+        }),
+      );
       const stats = ext.getMessageStats();
       expect(stats.groupCount).toBe(2);
       expect(stats.individualCount).toBe(1);

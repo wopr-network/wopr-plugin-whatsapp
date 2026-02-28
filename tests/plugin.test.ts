@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // Mock external dependencies before importing the module
 vi.mock("@whiskeysockets/baileys", () => ({
@@ -65,15 +65,15 @@ vi.mock("node:fs/promises", () => ({
 }));
 
 import plugin, {
-  toJid,
-  isAllowed,
-  extractText,
   chunkMessage,
-  sanitizeFilename,
-  parseCommand,
-  mediaCategory,
-  getSessionState,
   configSchema,
+  extractText,
+  getSessionState,
+  isAllowed,
+  mediaCategory,
+  parseCommand,
+  sanitizeFilename,
+  toJid,
 } from "../src/index.js";
 
 // ─── Plugin Registration ──────────────────────────────────────────
@@ -98,10 +98,7 @@ describe("plugin registration", () => {
     };
 
     await plugin.init(mockContext);
-    expect(mockContext.registerConfigSchema).toHaveBeenCalledWith(
-      "whatsapp",
-      configSchema,
-    );
+    expect(mockContext.registerConfigSchema).toHaveBeenCalledWith("whatsapp", configSchema);
     expect(mockContext.getAgentIdentity).toHaveBeenCalled();
   });
 
@@ -160,9 +157,7 @@ describe("configSchema", () => {
 
 describe("toJid", () => {
   it("returns JID unchanged if it already contains @", () => {
-    expect(toJid("1234567890@s.whatsapp.net")).toBe(
-      "1234567890@s.whatsapp.net",
-    );
+    expect(toJid("1234567890@s.whatsapp.net")).toBe("1234567890@s.whatsapp.net");
   });
 
   it("appends @s.whatsapp.net for plain numbers", () => {
@@ -515,12 +510,10 @@ describe("reply-to-message support (WOP-135)", () => {
     expect(mockInject).toHaveBeenCalled();
 
     // Find the sendMessage call that sent the bot's text response (not the reaction)
-    const textCalls = mockSendMessage.mock.calls.filter(
-      (call: unknown[]) => {
-        const content = call[1] as Record<string, unknown>;
-        return content && typeof content.text === "string" && !content.react;
-      }
-    );
+    const textCalls = mockSendMessage.mock.calls.filter((call: unknown[]) => {
+      const content = call[1] as Record<string, unknown>;
+      return content && typeof content.text === "string" && !content.react;
+    });
 
     expect(textCalls.length).toBeGreaterThan(0);
 
@@ -553,12 +546,10 @@ describe("reply-to-message support (WOP-135)", () => {
 
     await new Promise((r) => setTimeout(r, 100));
 
-    const textCalls = mockSendMessage.mock.calls.filter(
-      (call: unknown[]) => {
-        const content = call[1] as Record<string, unknown>;
-        return content && typeof content.text === "string" && !content.react;
-      }
-    );
+    const textCalls = mockSendMessage.mock.calls.filter((call: unknown[]) => {
+      const content = call[1] as Record<string, unknown>;
+      return content && typeof content.text === "string" && !content.react;
+    });
 
     expect(textCalls.length).toBeGreaterThan(0);
     const [jid, _content, opts] = textCalls[0];
@@ -589,12 +580,10 @@ describe("reply-to-message support (WOP-135)", () => {
     await new Promise((r) => setTimeout(r, 100));
 
     // The !help command response should also be quoted
-    const textCalls = mockSendMessage.mock.calls.filter(
-      (call: unknown[]) => {
-        const content = call[1] as Record<string, unknown>;
-        return content && typeof content.text === "string" && !content.react;
-      }
-    );
+    const textCalls = mockSendMessage.mock.calls.filter((call: unknown[]) => {
+      const content = call[1] as Record<string, unknown>;
+      return content && typeof content.text === "string" && !content.react;
+    });
 
     expect(textCalls.length).toBeGreaterThan(0);
     const [_jid, _content, opts] = textCalls[0];
@@ -607,14 +596,12 @@ describe("reply-to-message support (WOP-135)", () => {
     expect(eventHandlers["messages.upsert"]).toBeDefined();
 
     // Make sendMessage fail when called with quoted option, succeed without
-    mockSendMessage.mockImplementation(
-      async (_jid: string, _content: unknown, opts?: Record<string, unknown>) => {
-        if (opts && opts.quoted) {
-          throw new Error("Quoted message not found");
-        }
-        return undefined;
+    mockSendMessage.mockImplementation(async (_jid: string, _content: unknown, opts?: Record<string, unknown>) => {
+      if (opts?.quoted) {
+        throw new Error("Quoted message not found");
       }
-    );
+      return undefined;
+    });
 
     const incomingMsg = {
       key: {
@@ -634,12 +621,10 @@ describe("reply-to-message support (WOP-135)", () => {
     await new Promise((r) => setTimeout(r, 100));
 
     // Should have retried without quoted -- look for successful text sends
-    const textCalls = mockSendMessage.mock.calls.filter(
-      (call: unknown[]) => {
-        const content = call[1] as Record<string, unknown>;
-        return content && typeof content.text === "string" && !content.react;
-      }
-    );
+    const textCalls = mockSendMessage.mock.calls.filter((call: unknown[]) => {
+      const content = call[1] as Record<string, unknown>;
+      return content && typeof content.text === "string" && !content.react;
+    });
 
     // At least 2 calls: first attempt with quote (failed), retry without quote (succeeded)
     expect(textCalls.length).toBeGreaterThanOrEqual(2);
@@ -658,7 +643,9 @@ describe("reply-to-message support (WOP-135)", () => {
     expect(eventHandlers["messages.upsert"]).toBeDefined();
 
     // Make inject return a very long response to trigger chunking (>4000 chars)
-    const longResponse = Array(200).fill("This is a test sentence that needs to be long enough to exceed the chunk threshold.").join(" ");
+    const longResponse = Array(200)
+      .fill("This is a test sentence that needs to be long enough to exceed the chunk threshold.")
+      .join(" ");
     mockInject.mockResolvedValue(longResponse);
 
     const incomingMsg = {
@@ -678,12 +665,10 @@ describe("reply-to-message support (WOP-135)", () => {
 
     await new Promise((r) => setTimeout(r, 100));
 
-    const textCalls = mockSendMessage.mock.calls.filter(
-      (call: unknown[]) => {
-        const content = call[1] as Record<string, unknown>;
-        return content && typeof content.text === "string" && !content.react;
-      }
-    );
+    const textCalls = mockSendMessage.mock.calls.filter((call: unknown[]) => {
+      const content = call[1] as Record<string, unknown>;
+      return content && typeof content.text === "string" && !content.react;
+    });
 
     // Must have multiple chunks since response exceeds 4000 chars
     expect(textCalls.length).toBeGreaterThan(1);
