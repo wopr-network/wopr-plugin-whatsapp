@@ -39,7 +39,8 @@
     "lint": "biome check src/",
     "lint:fix": "biome check --fix src/",
     "prepublishOnly": "npm run build",
-    "test": "vitest run"
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
   },
   "types": "dist/index.d.ts",
   "version": "1.0.0",
