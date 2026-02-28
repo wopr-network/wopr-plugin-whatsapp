@@ -18,28 +18,24 @@ export type ReactionState = "queued" | "active" | "done" | "error" | "timeout";
 
 /** Maps each state to its default emoji. */
 export const DEFAULT_REACTION_EMOJIS: Record<ReactionState, string> = {
-	queued: "⏳",
-	active: "🔄",
-	done: "✅",
-	error: "❌",
-	timeout: "⏰",
+  queued: "⏳",
+  active: "🔄",
+  done: "✅",
+  error: "❌",
+  timeout: "⏰",
 };
 
 /** Valid state transitions. */
 const VALID_TRANSITIONS: Record<ReactionState, ReactionState[]> = {
-	queued: ["active", "done", "error", "timeout"],
-	active: ["done", "error", "timeout"],
-	done: [],
-	error: [],
-	timeout: [],
+  queued: ["active", "done", "error", "timeout"],
+  active: ["done", "error", "timeout"],
+  done: [],
+  error: [],
+  timeout: [],
 };
 
 /** Function signature for sending a reaction via Baileys. */
-export type SendReactionFn = (
-	chatJid: string,
-	messageId: string,
-	emoji: string,
-) => Promise<void>;
+export type SendReactionFn = (chatJid: string, messageId: string, emoji: string) => Promise<void>;
 
 /**
  * Manages the reaction state for a single WhatsApp message.
@@ -72,10 +68,10 @@ export class ReactionStateMachine {
 		this.emojis = emojis;
 	}
 
-	/** Current state, or null if no transition has occurred yet. */
-	get state(): ReactionState | null {
-		return this._state;
-	}
+  /** Current state, or null if no transition has occurred yet. */
+  get state(): ReactionState | null {
+    return this._state;
+  }
 
 	/** Whether the state machine has reached a terminal state. */
 	get isTerminal(): boolean {
@@ -86,73 +82,69 @@ export class ReactionStateMachine {
 		);
 	}
 
-	/**
-	 * Transition to a new state and send the corresponding reaction.
-	 *
-	 * Validates the transition is legal. If the state machine is already in
-	 * a terminal state, the transition is silently ignored (no stale reactions).
-	 *
-	 * @returns true if the transition occurred, false if it was skipped.
-	 */
-	async transition(newState: ReactionState): Promise<boolean> {
-		// First transition (null -> any state)
-		if (this._state === null) {
-			if (newState !== "queued") {
-				this.logger.warn(
-					`[reactions] First transition must be to 'queued', got '${newState}' for message ${this.messageId}`,
-				);
-				return false;
-			}
-		} else {
-			// Already terminal — silently skip
-			if (this.isTerminal) {
-				this.logger.debug(
-					`[reactions] Ignoring transition to '${newState}' — already in terminal state '${this._state}' for message ${this.messageId}`,
-				);
-				return false;
-			}
+  /**
+   * Transition to a new state and send the corresponding reaction.
+   *
+   * Validates the transition is legal. If the state machine is already in
+   * a terminal state, the transition is silently ignored (no stale reactions).
+   *
+   * @returns true if the transition occurred, false if it was skipped.
+   */
+  async transition(newState: ReactionState): Promise<boolean> {
+    // First transition (null -> any state)
+    if (this._state === null) {
+      if (newState !== "queued") {
+        this.logger.warn(
+          `[reactions] First transition must be to 'queued', got '${newState}' for message ${this.messageId}`,
+        );
+        return false;
+      }
+    } else {
+      // Already terminal — silently skip
+      if (this.isTerminal) {
+        this.logger.debug(
+          `[reactions] Ignoring transition to '${newState}' — already in terminal state '${this._state}' for message ${this.messageId}`,
+        );
+        return false;
+      }
 
-			// Validate transition
-			const allowed = VALID_TRANSITIONS[this._state];
-			if (!allowed.includes(newState)) {
-				this.logger.warn(
-					`[reactions] Invalid transition '${this._state}' -> '${newState}' for message ${this.messageId}`,
-				);
-				return false;
-			}
-		}
+      // Validate transition
+      const allowed = VALID_TRANSITIONS[this._state];
+      if (!allowed.includes(newState)) {
+        this.logger.warn(
+          `[reactions] Invalid transition '${this._state}' -> '${newState}' for message ${this.messageId}`,
+        );
+        return false;
+      }
+    }
 
-		const emoji = this.emojis[newState];
-		const previousState = this._state;
-		this._state = newState;
+    const emoji = this.emojis[newState];
+    const previousState = this._state;
+    this._state = newState;
 
-		try {
-			await this.sendReaction(this.chatJid, this.messageId, emoji);
-			this.logger.debug(
-				`[reactions] ${previousState || "init"} -> ${newState} (${emoji}) for message ${this.messageId}`,
-			);
-		} catch (err) {
-			// Reaction send failure should not break the processing pipeline.
-			// State is still updated so subsequent transitions remain valid.
-			this.logger.warn(
-				`[reactions] Failed to send ${newState} reaction for message ${this.messageId}: ${String(err)}`,
-			);
-		}
+    try {
+      await this.sendReaction(this.chatJid, this.messageId, emoji);
+      this.logger.debug(
+        `[reactions] ${previousState || "init"} -> ${newState} (${emoji}) for message ${this.messageId}`,
+      );
+    } catch (err) {
+      // Reaction send failure should not break the processing pipeline.
+      // State is still updated so subsequent transitions remain valid.
+      this.logger.warn(`[reactions] Failed to send ${newState} reaction for message ${this.messageId}: ${String(err)}`);
+    }
 
-		return true;
-	}
+    return true;
+  }
 
-	/**
-	 * Remove the reaction entirely (send empty reaction text).
-	 * WhatsApp interprets an empty reaction text as removing the reaction.
-	 */
-	async clear(): Promise<void> {
-		try {
-			await this.sendReaction(this.chatJid, this.messageId, "");
-		} catch (err) {
-			this.logger.warn(
-				`[reactions] Failed to clear reaction for message ${this.messageId}: ${String(err)}`,
-			);
-		}
-	}
+  /**
+   * Remove the reaction entirely (send empty reaction text).
+   * WhatsApp interprets an empty reaction text as removing the reaction.
+   */
+  async clear(): Promise<void> {
+    try {
+      await this.sendReaction(this.chatJid, this.messageId, "");
+    } catch (err) {
+      this.logger.warn(`[reactions] Failed to clear reaction for message ${this.messageId}: ${String(err)}`);
+    }
+  }
 }

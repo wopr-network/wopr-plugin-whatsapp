@@ -119,63 +119,61 @@ const WhatsAppConfigSchema = z.object({
 });
 
 export const configSchema: ConfigSchema = {
-	title: "WhatsApp Integration",
-	description: "Configure WhatsApp Web integration using Baileys",
-	fields: [
-		{
-			name: "accountId",
-			type: "text",
-			label: "Account ID",
-			placeholder: "default",
-			default: "default",
-			description: "Unique identifier for this WhatsApp account",
-		},
-		{
-			name: "dmPolicy",
-			type: "select",
-			label: "DM Policy",
-			placeholder: "allowlist",
-			default: "allowlist",
-			description:
-				"How to handle direct messages: allowlist, open, or disabled",
-		},
-		{
-			name: "allowFrom",
-			type: "array",
-			label: "Allowed Numbers",
-			placeholder: "+1234567890",
-			description: "Phone numbers allowed to DM (E.164 format)",
-		},
-		{
-			name: "selfChatMode",
-			type: "boolean",
-			label: "Self-Chat Mode",
-			default: false,
-			description:
-				"Enable for personal phone numbers (prevents spamming contacts)",
-		},
-		{
-			name: "ownerNumber",
-			type: "text",
-			label: "Owner Number",
-			placeholder: "+1234567890",
-			description: "Your phone number for self-chat mode",
-		},
-		{
-			name: "verbose",
-			type: "boolean",
-			label: "Verbose Logging",
-			default: false,
-			description: "Enable detailed Baileys logging",
-		},
-		{
-			name: "pairingRequests",
-			type: "object",
-			label: "Pairing Requests",
-			hidden: true,
-			default: {},
-		} as ConfigField,
-	],
+  title: "WhatsApp Integration",
+  description: "Configure WhatsApp Web integration using Baileys",
+  fields: [
+    {
+      name: "accountId",
+      type: "text",
+      label: "Account ID",
+      placeholder: "default",
+      default: "default",
+      description: "Unique identifier for this WhatsApp account",
+    },
+    {
+      name: "dmPolicy",
+      type: "select",
+      label: "DM Policy",
+      placeholder: "allowlist",
+      default: "allowlist",
+      description: "How to handle direct messages: allowlist, open, or disabled",
+    },
+    {
+      name: "allowFrom",
+      type: "array",
+      label: "Allowed Numbers",
+      placeholder: "+1234567890",
+      description: "Phone numbers allowed to DM (E.164 format)",
+    },
+    {
+      name: "selfChatMode",
+      type: "boolean",
+      label: "Self-Chat Mode",
+      default: false,
+      description: "Enable for personal phone numbers (prevents spamming contacts)",
+    },
+    {
+      name: "ownerNumber",
+      type: "text",
+      label: "Owner Number",
+      placeholder: "+1234567890",
+      description: "Your phone number for self-chat mode",
+    },
+    {
+      name: "verbose",
+      type: "boolean",
+      label: "Verbose Logging",
+      default: false,
+      description: "Enable detailed Baileys logging",
+    },
+    {
+      name: "pairingRequests",
+      type: "object",
+      label: "Pairing Requests",
+      hidden: true,
+      default: {},
+    } as ConfigField,
+  ],
 };
 
 // ============================================================================
@@ -212,53 +210,51 @@ const whatsappExtension = {
 // ============================================================================
 
 const webmcpTools = [
-	{
-		name: "getWhatsappStatus",
-		description:
-			"Get WhatsApp connection status: connected/disconnected, phone number, and QR pairing state.",
-		annotations: { readOnlyHint: true },
-	},
-	{
-		name: "listWhatsappChats",
-		description:
-			"List active WhatsApp chats including individual and group conversations.",
-		annotations: { readOnlyHint: true },
-	},
-	{
-		name: "getWhatsappMessageStats",
-		description:
-			"Get WhatsApp message processing statistics: messages processed, active conversations, and group count.",
-		annotations: { readOnlyHint: true },
-	},
+  {
+    name: "getWhatsappStatus",
+    description: "Get WhatsApp connection status: connected/disconnected, phone number, and QR pairing state.",
+    annotations: { readOnlyHint: true },
+  },
+  {
+    name: "listWhatsappChats",
+    description: "List active WhatsApp chats including individual and group conversations.",
+    annotations: { readOnlyHint: true },
+  },
+  {
+    name: "getWhatsappMessageStats",
+    description:
+      "Get WhatsApp message processing statistics: messages processed, active conversations, and group count.",
+    annotations: { readOnlyHint: true },
+  },
 ];
 
 // Plugin manifest for WaaS integration
 const manifest: PluginManifest & { webmcpTools?: typeof webmcpTools } = {
-	name: "@wopr-network/plugin-whatsapp",
-	version: "1.0.0",
-	description: "WhatsApp integration using Baileys (WhatsApp Web)",
-	author: "WOPR Network",
-	license: "MIT",
-	repository: "https://github.com/wopr-network/wopr-plugin-whatsapp",
-	capabilities: ["channel"],
-	category: "channel",
-	icon: "📱",
-	tags: ["whatsapp", "messaging", "channel", "baileys"],
-	requires: {
-		network: {
-			outbound: true,
-		},
-		storage: {
-			persistent: true,
-			estimatedSize: "50MB",
-		},
-	},
-	configSchema,
-	lifecycle: {
-		shutdownBehavior: "graceful",
-		shutdownTimeoutMs: 10000,
-	},
-	webmcpTools,
+  name: "@wopr-network/plugin-whatsapp",
+  version: "1.0.0",
+  description: "WhatsApp integration using Baileys (WhatsApp Web)",
+  author: "WOPR Network",
+  license: "MIT",
+  repository: "https://github.com/wopr-network/wopr-plugin-whatsapp",
+  capabilities: ["channel"],
+  category: "channel",
+  icon: "📱",
+  tags: ["whatsapp", "messaging", "channel", "baileys"],
+  requires: {
+    network: {
+      outbound: true,
+    },
+    storage: {
+      persistent: true,
+      estimatedSize: "50MB",
+    },
+  },
+  configSchema,
+  lifecycle: {
+    shutdownBehavior: "graceful",
+    shutdownTimeoutMs: 10000,
+  },
+  webmcpTools,
 };
 
 // ============================================================================
@@ -266,10 +262,10 @@ const manifest: PluginManifest & { webmcpTools?: typeof webmcpTools } = {
 // ============================================================================
 
 const plugin: WOPRPlugin = {
-	name: "whatsapp",
-	version: "1.0.0",
-	description: "WhatsApp integration using Baileys (WhatsApp Web)",
-	manifest,
+  name: "whatsapp",
+  version: "1.0.0",
+  description: "WhatsApp integration using Baileys (WhatsApp Web)",
+  manifest,
 
 	async init(context: WOPRPluginContext): Promise<void> {
 		ctx = context;
@@ -385,12 +381,12 @@ const plugin: WOPRPlugin = {
 			ctx.registerExtension("whatsapp-webmcp", webmcpExtension);
 		}
 
-		const accountId = config.accountId || "default";
+    const accountId = config.accountId || "default";
 
-		// Ensure auth directory exists (only needed for filesystem fallback)
-		if (!storage) {
-			await ensureAuthDir(accountId);
-		}
+    // Ensure auth directory exists (only needed for filesystem fallback)
+    if (!storage) {
+      await ensureAuthDir(accountId);
+    }
 
 		// Start session if credentials exist
 		if (await hasCredentials(accountId)) {
@@ -472,16 +468,16 @@ export { chunkMessage, toJid } from "./messaging.js";
 export type { ReactionState, SendReactionFn } from "./reactions.js";
 export { DEFAULT_REACTION_EMOJIS, ReactionStateMachine } from "./reactions.js";
 export type {
-	AuthContext as WebMCPAuthContext,
-	WebMCPRegistry,
-	WebMCPTool,
+  AuthContext as WebMCPAuthContext,
+  WebMCPRegistry,
+  WebMCPTool,
 } from "./webmcp-whatsapp.js";
 export { registerWhatsappTools } from "./webmcp-whatsapp.js";
 export type {
-	ChatInfo,
-	WhatsAppMessageStatsInfo,
-	WhatsAppStatusInfo,
-	WhatsAppWebMCPExtension,
+  ChatInfo,
+  WhatsAppMessageStatsInfo,
+  WhatsAppStatusInfo,
+  WhatsAppWebMCPExtension,
 } from "./whatsapp-extension.js";
 
 export default plugin;

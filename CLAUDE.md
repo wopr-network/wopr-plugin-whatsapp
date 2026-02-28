@@ -5,11 +5,13 @@ WhatsApp channel plugin for WOPR using Baileys (WhatsApp Web protocol).
 ## Commands
 
 ```bash
-npm run build     # tsc
-npm run check     # biome check + tsc --noEmit (run before committing)
-npm run lint:fix  # biome check --fix src/
-npm run format    # biome format --write src/
-npm test          # vitest run
+npm run build      # tsc
+npm run check      # biome check --config-path=. src/ && tsc --noEmit (run before committing)
+npm run lint       # biome check --config-path=. src/
+npm run lint:fix   # biome check --config-path=. --fix src/
+npm run format     # biome format --config-path=. --write src/
+npm run typecheck  # tsc --noEmit
+npm test           # vitest run
 ```
 
 ## Architecture
