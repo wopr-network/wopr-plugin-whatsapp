@@ -83,7 +83,7 @@ export function createWhatsAppWebMCPExtension(state: WhatsAppState): WhatsAppWeb
       let phoneNumber: string | null = null;
       if (sock?.user?.id) {
         // Baileys user.id format: "1234567890:12@s.whatsapp.net"
-        phoneNumber = sock.user.id.split(":")[0] || sock.user.id.split("@")[0];
+        phoneNumber = sock.user.id.split(":")[0].split("@")[0];
       }
 
       return {

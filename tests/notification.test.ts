@@ -132,22 +132,28 @@ describe("handleOwnerReply", () => {
     expect(p2pAccept).toHaveBeenCalled();
   });
 
-  it("sends fallback confirmation if p2p extension not available for ACCEPT", async () => {
+  it("sends fallback message if p2p extension not available for ACCEPT", async () => {
     await sendFriendRequestNotification("frank", "a".repeat(64), "b".repeat(64), "ch6", "general", "sig6");
     mockSend.mockClear();
 
     const consumed = await handleOwnerReply(OWNER_JID, "ACCEPT", noOpP2P);
     expect(consumed).toBe(true);
-    expect(mockSend).toHaveBeenCalledWith(OWNER_JID, expect.stringContaining("frank"));
+    const [to, message] = mockSend.mock.calls[0] as [string, string];
+    expect(to).toBe(OWNER_JID);
+    expect(message).toContain("frank");
+    expect(message.toLowerCase()).toContain("not available");
   });
 
-  it("sends fallback denial confirmation if p2p extension not available for DENY", async () => {
+  it("sends fallback message if p2p extension not available for DENY", async () => {
     await sendFriendRequestNotification("grace", "a".repeat(64), "b".repeat(64), "ch7", "general", "sig7");
     mockSend.mockClear();
 
     const consumed = await handleOwnerReply(OWNER_JID, "DENY", noOpP2P);
     expect(consumed).toBe(true);
-    expect(mockSend).toHaveBeenCalledWith(OWNER_JID, expect.stringContaining("grace"));
+    const [to, message] = mockSend.mock.calls[0] as [string, string];
+    expect(to).toBe(OWNER_JID);
+    expect(message).toContain("grace");
+    expect(message.toLowerCase()).toContain("not available");
   });
 
   it("sends error message when ACCEPT handler throws", async () => {

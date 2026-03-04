@@ -192,7 +192,7 @@ export async function handleOwnerReply(
       } else {
         await sendMessageInternal(
           toJid(ownerNumber),
-          `Accepted friend request from ${oldest.requestFrom} (P2P extension not available).`,
+          `Could not accept friend request from ${oldest.requestFrom}: P2P extension not available.`,
         );
       }
     } else {
@@ -202,7 +202,10 @@ export async function handleOwnerReply(
         logger.info({ msg: "Friend request denied", from: oldest.requestFrom });
         await sendMessageInternal(toJid(ownerNumber), `Friend request from ${oldest.requestFrom} denied.`);
       } else {
-        await sendMessageInternal(toJid(ownerNumber), `Friend request from ${oldest.requestFrom} denied.`);
+        await sendMessageInternal(
+          toJid(ownerNumber),
+          `Could not deny friend request from ${oldest.requestFrom}: P2P extension not available.`,
+        );
       }
     }
   } catch (err) {
