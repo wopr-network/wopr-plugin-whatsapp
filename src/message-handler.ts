@@ -36,9 +36,7 @@ export function initMessageHandler(deps: {
   _getSocket = deps.getSocket;
   _incrementMessageCount = deps.incrementMessageCount;
   _getRetryConfig = deps.getRetryConfig;
-  if (deps.handleOwnerReply) {
-    _handleOwnerReply = deps.handleOwnerReply;
-  }
+  _handleOwnerReply = deps.handleOwnerReply ?? (async () => false);
 }
 
 export function getContactsMap(): Map<string, Contact> {

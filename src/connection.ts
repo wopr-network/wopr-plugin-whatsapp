@@ -139,7 +139,9 @@ export async function createSocket(accountId: string, onQr?: (qr: string) => voi
               handler: (ctx: unknown) => Promise<void>;
             }
           >,
-        );
+        ).catch((err) => {
+          logger.error(`Failed to process incoming message: ${String(err)}`);
+        });
       }
     }
   });

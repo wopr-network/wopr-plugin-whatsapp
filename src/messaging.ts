@@ -22,6 +22,16 @@ export function chunkMessage(text: string, maxLength: number): string[] {
   const sentences = text.split(/(?<=[.!?])\s+/);
 
   for (const sentence of sentences) {
+    if (sentence.length > maxLength) {
+      if (current) {
+        chunks.push(current);
+        current = "";
+      }
+      for (let i = 0; i < sentence.length; i += maxLength) {
+        chunks.push(sentence.slice(i, i + maxLength));
+      }
+      continue;
+    }
     if (current.length + sentence.length + 1 <= maxLength) {
       current += (current ? " " : "") + sentence;
     } else {

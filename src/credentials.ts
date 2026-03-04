@@ -105,8 +105,13 @@ export async function maybeRunMigration(accountId: string): Promise<void> {
   if (!storage) return;
 
   // Skip if storage already has creds for this account
-  const existing = await storage.get(WHATSAPP_CREDS_TABLE, accountId);
-  if (existing != null) return;
+  try {
+    const existing = await storage.get(WHATSAPP_CREDS_TABLE, accountId);
+    if (existing != null) return;
+  } catch (err) {
+    logger.warn(`Skipping migration pre-check for account ${accountId}: ${String(err)}`);
+    return;
+  }
 
   const authDir = getAuthDir(accountId);
   const credsPath = path.join(authDir, "creds.json");

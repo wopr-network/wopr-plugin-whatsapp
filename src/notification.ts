@@ -134,7 +134,7 @@ export async function sendFriendRequestNotification(
 
 /**
  * Check if an incoming message from the owner is an ACCEPT or DENY response.
- * If so, look up the most-recent pending request and invoke the appropriate
+ * If so, look up the oldest pending request and invoke the appropriate
  * p2p extension method.
  *
  * Returns true if the message was consumed as an ACCEPT/DENY response.
