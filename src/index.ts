@@ -17,60 +17,39 @@ import fsSync from "node:fs";
 import path from "node:path";
 import type { WASocket } from "@whiskeysockets/baileys";
 import { z } from "zod";
+import { initChannelProvider, whatsappChannelProvider } from "./channel-provider.js";
+import { clearAllSessionState, clearRegisteredCommands, initCommands, sessionOverrides } from "./commands.js";
 import {
-	initChannelProvider,
-	whatsappChannelProvider,
-} from "./channel-provider.js";
-import {
-	clearAllSessionState,
-	clearRegisteredCommands,
-	initCommands,
-	sessionOverrides,
-} from "./commands.js";
-import {
-	clearCleanups,
-	getCleanups,
-	initConnection,
-	login as loginImpl,
-	logout as logoutImpl,
-	startSession as startSessionImpl,
+  clearCleanups,
+  getCleanups,
+  initConnection,
+  login as loginImpl,
+  logout as logoutImpl,
+  startSession as startSessionImpl,
 } from "./connection.js";
-import {
-	ensureAuthDir,
-	getAuthDir,
-	hasCredentials,
-	initCredentials,
-} from "./credentials.js";
+import { ensureAuthDir, getAuthDir, hasCredentials, initCredentials } from "./credentials.js";
 import { initMedia } from "./media.js";
-import {
-	cancelAllStreams,
-	contacts,
-	groups,
-	initMessageHandler,
-	messageCache,
-} from "./message-handler.js";
+import { cancelAllStreams, contacts, groups, initMessageHandler, messageCache } from "./message-handler.js";
 import { initMessaging } from "./messaging.js";
-import type { PluginContextWithStorage, PluginStorageAPI } from "./storage.js";
 import {
-	WHATSAPP_CREDS_SCHEMA,
-	WHATSAPP_CREDS_TABLE,
-	WHATSAPP_KEYS_SCHEMA,
-	WHATSAPP_KEYS_TABLE,
-} from "./storage.js";
+  handleOwnerReply,
+  initNotification,
+  type P2PExtension,
+  sendFriendRequestNotification,
+} from "./notification.js";
+import type { PluginContextWithStorage, PluginStorageAPI } from "./storage.js";
+import { WHATSAPP_CREDS_SCHEMA, WHATSAPP_CREDS_TABLE, WHATSAPP_KEYS_SCHEMA, WHATSAPP_KEYS_TABLE } from "./storage.js";
 import type {
-	AgentIdentity,
-	ConfigField,
-	ConfigSchema,
-	PluginManifest,
-	WhatsAppConfig,
-	WOPRPlugin,
-	WOPRPluginContext,
+  AgentIdentity,
+  ConfigField,
+  ConfigSchema,
+  PluginManifest,
+  WhatsAppConfig,
+  WOPRPlugin,
+  WOPRPluginContext,
 } from "./types.js";
 import { clearAllTypingIntervals, initTyping } from "./typing.js";
-import {
-	createWhatsAppWebMCPExtension,
-	type WhatsAppWebMCPExtension,
-} from "./whatsapp-extension.js";
+import { createWhatsAppWebMCPExtension, type WhatsAppWebMCPExtension } from "./whatsapp-extension.js";
 
 // ============================================================================
 // Module-level state (orchestrator-owned)
@@ -90,32 +69,31 @@ let totalMessageCount = 0;
 // ============================================================================
 
 const WhatsAppConfigSchema = z.object({
-	accountId: z.string().default("default"),
-	authDir: z.string().optional(),
-	dmPolicy: z
-		.enum(["allowlist", "blocklist", "open", "disabled"])
-		.default("allowlist"),
-	allowFrom: z.array(z.string()).default([]),
-	selfChatMode: z.boolean().default(false),
-	ownerNumber: z.string().optional(),
-	verbose: z.boolean().default(false),
-	pairingRequests: z
-		.record(
-			z.object({
-				code: z.string(),
-				name: z.string(),
-				requestedAt: z.number(),
-			}),
-		)
-		.default({}),
-	retry: z
-		.object({
-			maxRetries: z.number().optional(),
-			baseDelay: z.number().optional(),
-			maxDelay: z.number().optional(),
-			jitter: z.number().optional(),
-		})
-		.optional(),
+  accountId: z.string().default("default"),
+  authDir: z.string().optional(),
+  dmPolicy: z.enum(["allowlist", "blocklist", "open", "disabled"]).default("allowlist"),
+  allowFrom: z.array(z.string()).default([]),
+  selfChatMode: z.boolean().default(false),
+  ownerNumber: z.string().optional(),
+  verbose: z.boolean().default(false),
+  pairingRequests: z
+    .record(
+      z.string(),
+      z.object({
+        code: z.string(),
+        name: z.string(),
+        requestedAt: z.number(),
+      }),
+    )
+    .default({}),
+  retry: z
+    .object({
+      maxRetries: z.number().optional(),
+      baseDelay: z.number().optional(),
+      maxDelay: z.number().optional(),
+      jitter: z.number().optional(),
+    })
+    .optional(),
 });
 
 export const configSchema: ConfigSchema = {
@@ -181,15 +159,15 @@ export const configSchema: ConfigSchema = {
 // ============================================================================
 
 async function refreshIdentity(): Promise<void> {
-	if (!ctx) return;
-	try {
-		const identity = await ctx.getAgentIdentity();
-		if (identity) {
-			agentIdentity = { ...agentIdentity, ...identity };
-		}
-	} catch {
-		// Ignore
-	}
+  if (!ctx) return;
+  try {
+    const identity = await ctx.getAgentIdentity();
+    if (identity) {
+      agentIdentity = { ...agentIdentity, ...identity };
+    }
+  } catch {
+    // Ignore
+  }
 }
 
 // ============================================================================
@@ -197,12 +175,22 @@ async function refreshIdentity(): Promise<void> {
 // ============================================================================
 
 const whatsappExtension = {
-	send: async (to: string, message: string): Promise<void> => {
-		if (!socket) throw new Error("WhatsApp socket is not connected");
-		const { sendMessageInternal } = await import("./messaging.js");
-		await sendMessageInternal(to, message);
-	},
-	isConnected: (): boolean => socket !== null,
+  send: async (to: string, message: string): Promise<void> => {
+    if (!socket) throw new Error("WhatsApp socket is not connected");
+    const { sendMessageInternal } = await import("./messaging.js");
+    await sendMessageInternal(to, message);
+  },
+  isConnected: (): boolean => socket !== null,
+  sendFriendRequestNotification: async (
+    requestFrom: string,
+    pubkey: string,
+    encryptPub: string,
+    channelId: string,
+    channelName: string,
+    signature: string,
+  ): Promise<boolean> => {
+    return sendFriendRequestNotification(requestFrom, pubkey, encryptPub, channelId, channelName, signature);
+  },
 };
 
 // ============================================================================
@@ -267,119 +255,122 @@ const plugin: WOPRPlugin = {
   description: "WhatsApp integration using Baileys (WhatsApp Web)",
   manifest,
 
-	async init(context: WOPRPluginContext): Promise<void> {
-		ctx = context;
+  async init(context: WOPRPluginContext): Promise<void> {
+    ctx = context;
 
-		// Validate config with zod
-		const rawConfig = context.getConfig() ?? {};
-		const parsed = WhatsAppConfigSchema.safeParse(rawConfig);
-		if (!parsed.success) {
-			ctx = null;
-			return;
-		}
-		config = parsed.data;
+    // Validate config with zod
+    const rawConfig = context.getConfig() ?? {};
+    const parsed = WhatsAppConfigSchema.safeParse(rawConfig);
+    if (!parsed.success) {
+      ctx = null;
+      return;
+    }
+    config = parsed.data;
 
-		// Detect Storage API from context
-		const ctxWithStorage = context as unknown as PluginContextWithStorage;
-		if (ctxWithStorage.storage) {
-			storage = ctxWithStorage.storage;
-			storage.register(WHATSAPP_CREDS_TABLE, WHATSAPP_CREDS_SCHEMA);
-			storage.register(WHATSAPP_KEYS_TABLE, WHATSAPP_KEYS_SCHEMA);
-		} else {
-			storage = null;
-		}
+    // Detect Storage API from context
+    const ctxWithStorage = context as unknown as PluginContextWithStorage;
+    if (ctxWithStorage.storage) {
+      storage = ctxWithStorage.storage;
+      storage.register(WHATSAPP_CREDS_TABLE, WHATSAPP_CREDS_SCHEMA);
+      storage.register(WHATSAPP_KEYS_TABLE, WHATSAPP_KEYS_SCHEMA);
+    } else {
+      storage = null;
+    }
 
-		// Initialize all modules with getters/setters
-		initMessaging(
-			() => socket,
-			() => config.retry,
-		);
+    // Initialize all modules with getters/setters
+    initMessaging(
+      () => socket,
+      () => config.retry,
+    );
 
-		initTyping(() => socket);
+    initTyping(() => socket);
 
-		initMedia(
-			() => socket,
-			() => config,
-			() => config.retry,
-		);
+    initMedia(
+      () => socket,
+      () => config,
+      () => config.retry,
+    );
 
-		initCredentials(
-			() => config,
-			() => storage,
-		);
+    initCredentials(
+      () => config,
+      () => storage,
+    );
 
-		initCommands({
-			getCtx: () => ctx,
-			getAgentName: () => agentIdentity.name || "WOPR",
-			getBotUsername: () => agentIdentity.name || "WOPR",
-		});
+    initCommands({
+      getCtx: () => ctx,
+      getAgentName: () => agentIdentity.name || "WOPR",
+      getBotUsername: () => agentIdentity.name || "WOPR",
+    });
 
-		initChannelProvider(() => agentIdentity.name || "WOPR");
+    initChannelProvider(() => agentIdentity.name || "WOPR");
 
-		initMessageHandler({
-			getCtx: () => ctx,
-			getSocket: () => socket,
-			incrementMessageCount: () => {
-				totalMessageCount++;
-			},
-			getRetryConfig: () => config.retry as Record<string, unknown> | undefined,
-		});
+    initNotification(() => config.ownerNumber);
 
-		initConnection({
-			getConfig: () => config,
-			getStorage: () => storage,
-			setSocket: (s) => {
-				socket = s;
-			},
-			setConnectTime: (t) => {
-				connectTime = t;
-			},
-		});
+    initMessageHandler({
+      getCtx: () => ctx,
+      getSocket: () => socket,
+      incrementMessageCount: () => {
+        totalMessageCount++;
+      },
+      getRetryConfig: () => config.retry as Record<string, unknown> | undefined,
+      handleOwnerReply: (fromJid, text) =>
+        handleOwnerReply(fromJid, text, () => ctx?.getExtension?.("p2p") as P2PExtension | undefined),
+    });
 
-		// Register config schema
-		ctx.registerConfigSchema("whatsapp", configSchema);
+    initConnection({
+      getConfig: () => config,
+      getStorage: () => storage,
+      setSocket: (s) => {
+        socket = s;
+      },
+      setConnectTime: (t) => {
+        connectTime = t;
+      },
+    });
 
-		// Refresh identity BEFORE registering providers
-		await refreshIdentity();
+    // Register config schema
+    ctx.registerConfigSchema("whatsapp", configSchema);
 
-		// Register as a channel provider so other plugins can add commands/parsers
-		if (ctx.registerChannelProvider) {
-			ctx.registerChannelProvider(whatsappChannelProvider);
-		}
+    // Refresh identity BEFORE registering providers
+    await refreshIdentity();
 
-		// Register the WhatsApp extension so other plugins can send notifications
-		if (ctx.registerExtension) {
-			ctx.registerExtension("whatsapp", whatsappExtension);
-		}
+    // Register as a channel provider so other plugins can add commands/parsers
+    if (ctx.registerChannelProvider) {
+      ctx.registerChannelProvider(whatsappChannelProvider);
+    }
 
-		// Create and register WebMCP extension
-		webmcpExtension = createWhatsAppWebMCPExtension({
-			getSocket: () => socket,
-			getContacts: () => contacts,
-			getGroups: () => groups,
-			getSessionKeys: () => {
-				const { getSessionKeys } =
-					require("./commands.js") as typeof import("./commands.js");
-				return getSessionKeys();
-			},
-			getMessageCount: () => totalMessageCount,
-			getAccountId: () => config.accountId || "default",
-			hasCredentials: () => {
-				// Sync check for WebMCP (filesystem only)
-				const accountId = config.accountId || "default";
-				const authDir = getAuthDir(accountId);
-				const credsPath = path.join(authDir, "creds.json");
-				try {
-					return fsSync.existsSync(credsPath);
-				} catch {
-					return false;
-				}
-			},
-			getConnectTime: () => connectTime,
-		});
-		if (ctx.registerExtension) {
-			ctx.registerExtension("whatsapp-webmcp", webmcpExtension);
-		}
+    // Register the WhatsApp extension so other plugins can send notifications
+    if (ctx.registerExtension) {
+      ctx.registerExtension("whatsapp", whatsappExtension);
+    }
+
+    // Create and register WebMCP extension
+    webmcpExtension = createWhatsAppWebMCPExtension({
+      getSocket: () => socket,
+      getContacts: () => contacts,
+      getGroups: () => groups,
+      getSessionKeys: () => {
+        const { getSessionKeys } = require("./commands.js") as typeof import("./commands.js");
+        return getSessionKeys();
+      },
+      getMessageCount: () => totalMessageCount,
+      getAccountId: () => config.accountId || "default",
+      hasCredentials: () => {
+        // Sync check for WebMCP (filesystem only)
+        const accountId = config.accountId || "default";
+        const authDir = getAuthDir(accountId);
+        const credsPath = path.join(authDir, "creds.json");
+        try {
+          return fsSync.existsSync(credsPath);
+        } catch {
+          return false;
+        }
+      },
+      getConnectTime: () => connectTime,
+    });
+    if (ctx.registerExtension) {
+      ctx.registerExtension("whatsapp-webmcp", webmcpExtension);
+    }
 
     const accountId = config.accountId || "default";
 
@@ -388,51 +379,51 @@ const plugin: WOPRPlugin = {
       await ensureAuthDir(accountId);
     }
 
-		// Start session if credentials exist
-		if (await hasCredentials(accountId)) {
-			await startSessionImpl((s) => {
-				socket = s;
-			});
-		}
-	},
+    // Start session if credentials exist
+    if (await hasCredentials(accountId)) {
+      await startSessionImpl((s) => {
+        socket = s;
+      });
+    }
+  },
 
-	async shutdown(): Promise<void> {
-		cancelAllStreams();
-		clearAllTypingIntervals();
-		if (ctx?.unregisterChannelProvider) {
-			ctx.unregisterChannelProvider("whatsapp");
-		}
-		if (ctx?.unregisterExtension) {
-			ctx.unregisterExtension("whatsapp");
-			ctx.unregisterExtension("whatsapp-webmcp");
-		}
-		webmcpExtension = null;
-		connectTime = null;
-		totalMessageCount = 0;
-		if (socket) {
-			// IMPORTANT: Use end() not logout() — logout() permanently unlinks
-			// the device from WhatsApp. We only want to close the connection.
-			socket.end(undefined);
-			socket = null;
-		}
-		// Run registered socket cleanup functions (removeAllListeners per event)
-		for (const fn of getCleanups()) {
-			try {
-				await fn();
-			} catch {}
-		}
-		clearCleanups();
-		clearRegisteredCommands();
-		const { clearRegisteredParsers } = await import("./channel-provider.js");
-		clearRegisteredParsers();
-		clearAllSessionState();
-		messageCache.clear();
-		contacts.clear();
-		groups.clear();
-		sessionOverrides.clear();
-		storage = null;
-		ctx = null;
-	},
+  async shutdown(): Promise<void> {
+    cancelAllStreams();
+    clearAllTypingIntervals();
+    if (ctx?.unregisterChannelProvider) {
+      ctx.unregisterChannelProvider("whatsapp");
+    }
+    if (ctx?.unregisterExtension) {
+      ctx.unregisterExtension("whatsapp");
+      ctx.unregisterExtension("whatsapp-webmcp");
+    }
+    webmcpExtension = null;
+    connectTime = null;
+    totalMessageCount = 0;
+    if (socket) {
+      // IMPORTANT: Use end() not logout() — logout() permanently unlinks
+      // the device from WhatsApp. We only want to close the connection.
+      socket.end(undefined);
+      socket = null;
+    }
+    // Run registered socket cleanup functions (removeAllListeners per event)
+    for (const fn of getCleanups()) {
+      try {
+        await fn();
+      } catch {}
+    }
+    clearCleanups();
+    clearRegisteredCommands();
+    const { clearRegisteredParsers } = await import("./channel-provider.js");
+    clearRegisteredParsers();
+    clearAllSessionState();
+    messageCache.clear();
+    contacts.clear();
+    groups.clear();
+    sessionOverrides.clear();
+    storage = null;
+    ctx = null;
+  },
 };
 
 // ============================================================================
@@ -440,15 +431,15 @@ const plugin: WOPRPlugin = {
 // ============================================================================
 
 export async function login(): Promise<void> {
-	await loginImpl(socket, (s) => {
-		socket = s;
-	});
+  await loginImpl(socket, (s) => {
+    socket = s;
+  });
 }
 
 export async function logout(): Promise<void> {
-	await logoutImpl(socket, (s) => {
-		socket = s;
-	});
+  await logoutImpl(socket, (s) => {
+    socket = s;
+  });
 }
 
 // ============================================================================
@@ -457,10 +448,10 @@ export async function logout(): Promise<void> {
 
 export { getSessionState, parseCommand } from "./commands.js";
 export {
-	extractText,
-	isAllowed,
-	mediaCategory,
-	sanitizeFilename,
+  extractText,
+  isAllowed,
+  mediaCategory,
+  sanitizeFilename,
 } from "./media.js";
 export { chunkMessage, toJid } from "./messaging.js";
 

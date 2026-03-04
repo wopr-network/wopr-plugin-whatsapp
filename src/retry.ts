@@ -168,10 +168,10 @@ export function calculateDelay(attempt: number, config: RetryConfig, retryAfterM
  * @throws The last error if all retries are exhausted, or immediately for permanent errors
  */
 export async function withRetry<T>(
-	operation: () => Promise<T>,
-	label: string,
-	logger: PluginLogger,
-	config: Partial<RetryConfig> = {},
+  operation: () => Promise<T>,
+  label: string,
+  logger: PluginLogger,
+  config: Partial<RetryConfig> = {},
 ): Promise<T> {
   const cfg = { ...DEFAULT_RETRY_CONFIG, ...config };
   let lastError: unknown;

@@ -47,40 +47,36 @@ export type SendReactionFn = (chatJid: string, messageId: string, emoji: string)
  *   await sm.transition("done");    // ✅
  */
 export class ReactionStateMachine {
-	private _state: ReactionState | null = null;
-	private readonly chatJid: string;
-	private readonly messageId: string;
-	private readonly sendReaction: SendReactionFn;
-	private readonly logger: PluginLogger;
-	private readonly emojis: Record<ReactionState, string>;
+  private _state: ReactionState | null = null;
+  private readonly chatJid: string;
+  private readonly messageId: string;
+  private readonly sendReaction: SendReactionFn;
+  private readonly logger: PluginLogger;
+  private readonly emojis: Record<ReactionState, string>;
 
-	constructor(
-		chatJid: string,
-		messageId: string,
-		sendReaction: SendReactionFn,
-		logger: PluginLogger,
-		emojis: Record<ReactionState, string> = DEFAULT_REACTION_EMOJIS,
-	) {
-		this.chatJid = chatJid;
-		this.messageId = messageId;
-		this.sendReaction = sendReaction;
-		this.logger = logger;
-		this.emojis = emojis;
-	}
+  constructor(
+    chatJid: string,
+    messageId: string,
+    sendReaction: SendReactionFn,
+    logger: PluginLogger,
+    emojis: Record<ReactionState, string> = DEFAULT_REACTION_EMOJIS,
+  ) {
+    this.chatJid = chatJid;
+    this.messageId = messageId;
+    this.sendReaction = sendReaction;
+    this.logger = logger;
+    this.emojis = emojis;
+  }
 
   /** Current state, or null if no transition has occurred yet. */
   get state(): ReactionState | null {
     return this._state;
   }
 
-	/** Whether the state machine has reached a terminal state. */
-	get isTerminal(): boolean {
-		return (
-			this._state === "done" ||
-			this._state === "error" ||
-			this._state === "timeout"
-		);
-	}
+  /** Whether the state machine has reached a terminal state. */
+  get isTerminal(): boolean {
+    return this._state === "done" || this._state === "error" || this._state === "timeout";
+  }
 
   /**
    * Transition to a new state and send the corresponding reaction.
