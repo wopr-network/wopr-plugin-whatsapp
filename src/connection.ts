@@ -96,11 +96,7 @@ export async function createSocket(accountId: string, onQr?: (qr: string) => voi
   // Handle credentials update
   let saveQueue = Promise.resolve();
   sock.ev.on("creds.update", () => {
-    saveQueue = saveQueue
-      .then(() => saveCreds())
-      .catch((err) => {
-        logger.warn(`Failed to persist WhatsApp credentials: ${String(err)}`);
-      });
+    saveQueue = saveQueue.then(() => saveCreds()).catch(() => {});
   });
   cleanups.push(() => sock.ev.removeAllListeners("creds.update"));
 

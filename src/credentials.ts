@@ -116,9 +116,6 @@ export async function maybeRunMigration(accountId: string): Promise<void> {
   const authDir = getAuthDir(accountId);
   const credsPath = path.join(authDir, "creds.json");
 
-  // Restore from backup if creds.json is missing/corrupted before attempting to read
-  maybeRestoreCredsFromBackup(authDir);
-
   const credsRaw = readCredsJsonRaw(credsPath);
   if (!credsRaw) return; // No legacy creds to migrate
 

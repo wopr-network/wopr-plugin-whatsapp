@@ -388,14 +388,7 @@ export async function handleIncomingMessage(
       }
     } catch (e) {
       logger.error(`Command handler error: ${e}`);
-    } finally {
-      // Clean up media temp file if present (text+media message)
-      if (mediaPath) {
-        const { default: fs } = await import("node:fs/promises");
-        fs.unlink(mediaPath).catch((err) => {
-          logger.warn(`Failed to clean up temp media ${mediaPath}: ${String(err)}`);
-        });
-      }
+      await injectMessage(waMessage, sessionKey, reactionSM, msg);
     }
     return;
   }

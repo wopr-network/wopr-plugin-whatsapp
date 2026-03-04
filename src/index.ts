@@ -359,12 +359,7 @@ const plugin: WOPRPlugin = {
       getMessageCount: () => totalMessageCount,
       getAccountId: () => config.accountId || "default",
       hasCredentials: () => {
-        if (storage) {
-          // When using Storage API we can't do a sync read, so use the
-          // connected socket as the best available synchronous proxy.
-          return socket !== null;
-        }
-        // Filesystem fallback
+        // Sync check for WebMCP (filesystem only)
         const accountId = config.accountId || "default";
         const authDir = getAuthDir(accountId);
         const credsPath = path.join(authDir, "creds.json");
