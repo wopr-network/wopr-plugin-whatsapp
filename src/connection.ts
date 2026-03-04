@@ -129,7 +129,7 @@ export async function createSocket(accountId: string, onQr?: (qr: string) => voi
   sock.ev.on("messages.upsert", (m) => {
     if (m.type === "notify" || m.type === "append") {
       for (const msg of m.messages) {
-        handleIncomingMessage(
+        void handleIncomingMessage(
           msg,
           getRegisteredParsers() as Map<
             string,
