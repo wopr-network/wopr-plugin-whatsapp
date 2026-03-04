@@ -42,10 +42,11 @@ afterEach(() => {
 });
 
 describe("sendFriendRequestNotification", () => {
-  it("returns false when no ownerNumber configured", async () => {
+  it("throws when no ownerNumber configured", async () => {
     initNotification(() => undefined);
-    const result = await sendFriendRequestNotification("alice", "a".repeat(64), "b".repeat(64), "ch1", "general", "sig1");
-    expect(result).toBe(false);
+    await expect(
+      sendFriendRequestNotification("alice", "a".repeat(64), "b".repeat(64), "ch1", "general", "sig1"),
+    ).rejects.toThrow("sendFriendRequestNotification: owner JID not set");
     expect(mockSend).not.toHaveBeenCalled();
   });
 

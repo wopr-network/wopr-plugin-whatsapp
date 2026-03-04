@@ -100,8 +100,7 @@ export async function sendFriendRequestNotification(
 ): Promise<boolean> {
   const ownerNumber = _getOwnerNumber();
   if (!ownerNumber) {
-    logger.warn({ msg: "No ownerNumber configured - friend request notification not sent" });
-    return false;
+    throw new Error("sendFriendRequestNotification: owner JID not set");
   }
 
   // Clean up expired entries before adding a new one (bounds memory growth)
