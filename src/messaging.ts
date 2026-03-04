@@ -32,7 +32,6 @@ export function chunkMessage(text: string, maxLength: number): string[] {
       }
       continue;
     }
-
     if (current.length + sentence.length + 1 <= maxLength) {
       current += (current ? " " : "") + sentence;
     } else {
