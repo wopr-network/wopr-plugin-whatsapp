@@ -69,12 +69,14 @@ export function stopNotificationCleanup(): void {
 
 function buildNotificationMessage(requestFrom: string, pubkey: string, channelName: string): string {
   const pubkeyShort = `${pubkey.slice(0, 12)}...`;
+  // Sanitize user-controlled fields: replace newlines to prevent message injection
+  const safeChannelName = channelName.replace(/\n/g, " ");
   return [
     "*Friend Request Received*",
     "",
     `*From:* ${requestFrom}`,
     `*Pubkey:* ${pubkeyShort}`,
-    `*Channel:* ${channelName}`,
+    `*Channel:* ${safeChannelName}`,
     "",
     "Reply *ACCEPT* or *DENY* to handle this request.",
     "_(Expires in 15 minutes)_",
@@ -173,6 +175,10 @@ export async function handleOwnerReply(
     return true; // consumed, but nothing to act on
   }
 
+  // Delete immediately before any await — prevents a concurrent ACCEPT/DENY
+  // from selecting the same entry while we wait on the p2p extension.
+  pendingRequests.delete(oldest.signature);
+
   const p2p = getP2pExtension();
 
   try {
@@ -210,10 +216,6 @@ export async function handleOwnerReply(
   } catch (err) {
     logger.error({ msg: "Failed to handle friend request", error: String(err) });
     await sendMessageInternal(toJid(ownerNumber), `Error handling friend request from ${oldest.requestFrom}: ${err}`);
-  } finally {
-    // Delete only after the callback attempt — ensures the entry is not
-    // silently discarded if the p2p extension throws before confirmation.
-    pendingRequests.delete(oldest.signature);
   }
 
   return true;
