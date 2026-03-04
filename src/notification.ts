@@ -32,7 +32,7 @@ export interface PendingFriendRequest {
 // Module state
 // ============================================================================
 
-// Pending requests awaiting owner reply (keyed by requestFrom, lowercased)
+// Pending requests awaiting owner reply (keyed by signature — unique per request)
 const pendingRequests: Map<string, PendingFriendRequest> = new Map();
 
 let _getOwnerNumber: () => string | undefined = () => undefined;
@@ -82,9 +82,12 @@ export async function sendFriendRequestNotification(
     return false;
   }
 
+  // Clean up expired entries before adding a new one (bounds memory growth)
+  cleanupExpiredNotifications();
+
   try {
-    // Store the pending request
-    pendingRequests.set(requestFrom.toLowerCase(), {
+    // Store the pending request keyed by signature (unique per request)
+    pendingRequests.set(signature, {
       requestFrom,
       pubkey,
       encryptPub,
@@ -101,7 +104,7 @@ export async function sendFriendRequestNotification(
     return true;
   } catch (err) {
     // Remove the pending entry if send failed
-    pendingRequests.delete(requestFrom.toLowerCase());
+    pendingRequests.delete(signature);
     logger.error({ msg: "Failed to send friend request notification", error: String(err) });
     return false;
   }
@@ -136,7 +139,7 @@ export async function handleOwnerReply(
   let oldest: PendingFriendRequest | undefined;
   for (const req of pendingRequests.values()) {
     if (now - req.timestamp > PENDING_REQUEST_TTL_MS) {
-      pendingRequests.delete(req.requestFrom.toLowerCase());
+      pendingRequests.delete(req.signature);
       continue;
     }
     if (!oldest || req.timestamp < oldest.timestamp) {
@@ -149,7 +152,7 @@ export async function handleOwnerReply(
     return true; // consumed, but nothing to act on
   }
 
-  pendingRequests.delete(oldest.requestFrom.toLowerCase());
+  pendingRequests.delete(oldest.signature);
 
   const p2p = getP2pExtension();
 
@@ -185,11 +188,17 @@ export async function handleOwnerReply(
       try {
         await p2p.denyFriendRequest(oldest.requestFrom, oldest.signature);
         logger.info({ msg: "Friend request denied", from: oldest.requestFrom });
+        await sendMessageInternal(toJid(ownerNumber), `Friend request from ${oldest.requestFrom} denied.`);
       } catch (err) {
         logger.error({ msg: "Failed to deny friend request", error: String(err) });
+        await sendMessageInternal(
+          toJid(ownerNumber),
+          `Failed to deny friend request from ${oldest.requestFrom}: ${err}`,
+        );
       }
+    } else {
+      await sendMessageInternal(toJid(ownerNumber), `Friend request from ${oldest.requestFrom} denied.`);
     }
-    await sendMessageInternal(toJid(ownerNumber), `Friend request from ${oldest.requestFrom} denied.`);
   }
 
   return true;
@@ -202,7 +211,7 @@ export function cleanupExpiredNotifications(): void {
   const now = Date.now();
   for (const [key, req] of pendingRequests) {
     if (now - req.timestamp > PENDING_REQUEST_TTL_MS) {
-      pendingRequests.delete(key);
+      pendingRequests.delete(key); // key === req.signature
     }
   }
 }

@@ -359,11 +359,15 @@ export async function handleIncomingMessage(
 
   // Check if this is an owner ACCEPT/DENY reply for a pending friend request
   if (text && !isGroup) {
-    const consumed = await _handleOwnerReply(from, text);
-    if (consumed) {
-      await reactionSM.transition("active");
-      await reactionSM.transition("done");
-      return;
+    try {
+      const consumed = await _handleOwnerReply(from, text);
+      if (consumed) {
+        await reactionSM.transition("active");
+        await reactionSM.transition("done");
+        return;
+      }
+    } catch (err) {
+      logger.warn(`Owner reply handler failed; continuing normal flow: ${String(err)}`);
     }
   }
 

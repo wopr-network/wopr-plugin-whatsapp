@@ -130,13 +130,56 @@ describe("handleOwnerReply", () => {
     expect(p2pAccept).toHaveBeenCalled();
   });
 
-  it("sends fallback confirmation if p2p extension not available", async () => {
+  it("sends fallback confirmation if p2p extension not available for ACCEPT", async () => {
     await sendFriendRequestNotification("frank", "a".repeat(64), "b".repeat(64), "ch6", "general", "sig6");
     mockSend.mockClear();
 
     const consumed = await handleOwnerReply(OWNER_JID, "ACCEPT", noOpP2P);
     expect(consumed).toBe(true);
     expect(mockSend).toHaveBeenCalledWith(OWNER_JID, expect.stringContaining("frank"));
+  });
+
+  it("sends fallback denial confirmation if p2p extension not available for DENY", async () => {
+    await sendFriendRequestNotification("grace", "a".repeat(64), "b".repeat(64), "ch7", "general", "sig7");
+    mockSend.mockClear();
+
+    const consumed = await handleOwnerReply(OWNER_JID, "DENY", noOpP2P);
+    expect(consumed).toBe(true);
+    expect(mockSend).toHaveBeenCalledWith(OWNER_JID, expect.stringContaining("grace"));
+  });
+
+  it("sends error message when ACCEPT handler throws", async () => {
+    await sendFriendRequestNotification("henry", "h".repeat(64), "i".repeat(64), "ch8", "general", "sig8");
+    mockSend.mockClear();
+
+    const p2pAccept = vi.fn().mockRejectedValue(new Error("accept failed"));
+    const p2p = (): P2PExtension => ({ acceptFriendRequest: p2pAccept });
+
+    const consumed = await handleOwnerReply(OWNER_JID, "ACCEPT", p2p);
+    expect(consumed).toBe(true);
+    expect(p2pAccept).toHaveBeenCalledOnce();
+    expect(mockSend).toHaveBeenCalled();
+    const [to, message] = mockSend.mock.calls.at(-1) as [string, string];
+    expect(to).toBe(OWNER_JID);
+    expect(message).toContain("henry");
+    expect(message.toLowerCase()).toContain("error");
+  });
+
+  it("sends error message when DENY handler throws", async () => {
+    await sendFriendRequestNotification("iris", "j".repeat(64), "k".repeat(64), "ch9", "general", "sig9");
+    mockSend.mockClear();
+
+    const p2pDeny = vi.fn().mockRejectedValue(new Error("deny failed"));
+    const p2p = (): P2PExtension => ({ denyFriendRequest: p2pDeny });
+
+    const consumed = await handleOwnerReply(OWNER_JID, "DENY", p2p);
+    expect(consumed).toBe(true);
+    expect(p2pDeny).toHaveBeenCalledOnce();
+    expect(mockSend).toHaveBeenCalled();
+    const [to, message] = mockSend.mock.calls.at(-1) as [string, string];
+    expect(to).toBe(OWNER_JID);
+    expect(message).toContain("iris");
+    expect(message.toLowerCase()).toContain("error");
   });
 });
 
