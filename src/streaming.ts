@@ -27,9 +27,9 @@ type WAMessageKey = proto.IMessageKey;
  * overflow when the content exceeds WhatsApp's character limit.
  */
 export class WhatsAppMessageStream {
-	private readonly jid: string;
-	private readonly socket: WASocket;
-	private readonly logger: PluginLogger;
+  private readonly jid: string;
+  private readonly socket: WASocket;
+  private readonly logger: PluginLogger;
 
   private content = "";
   private messageKey: WAMessageKey | null = null;
@@ -46,10 +46,10 @@ export class WhatsAppMessageStream {
   /** Whether any content was actually streamed to WhatsApp */
   private _didStream = false;
 
-	constructor(jid: string, socket: WASocket, logger: PluginLogger) {
-		this.jid = jid;
-		this.socket = socket;
-		this.logger = logger;
+  constructor(jid: string, socket: WASocket, logger: PluginLogger) {
+    this.jid = jid;
+    this.socket = socket;
+    this.logger = logger;
 
     // Start periodic flush at EDIT_INTERVAL_MS
     this.flushTimer = setInterval(() => this.processPending(), EDIT_INTERVAL_MS);
@@ -245,20 +245,16 @@ export function findSplitPoint(text: string, maxLen: number): number {
 export class StreamManager {
   private readonly streams = new Map<string, WhatsAppMessageStream>();
 
-	/**
-	 * Get or create a stream for a chat JID.
-	 * If a stream already exists, it is cancelled first (interruption).
-	 */
-	create(
-		jid: string,
-		socket: WASocket,
-		logger: PluginLogger,
-	): WhatsAppMessageStream {
-		const existing = this.streams.get(jid);
-		if (existing && !existing.isFinalized) {
-			logger.info(`Interrupting existing stream for ${jid}`);
-			existing.cancel();
-		}
+  /**
+   * Get or create a stream for a chat JID.
+   * If a stream already exists, it is cancelled first (interruption).
+   */
+  create(jid: string, socket: WASocket, logger: PluginLogger): WhatsAppMessageStream {
+    const existing = this.streams.get(jid);
+    if (existing && !existing.isFinalized) {
+      logger.info(`Interrupting existing stream for ${jid}`);
+      existing.cancel();
+    }
 
     const stream = new WhatsAppMessageStream(jid, socket, logger);
     this.streams.set(jid, stream);
