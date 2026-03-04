@@ -21,6 +21,8 @@ import {
   handleOwnerReply,
   initNotification,
   sendFriendRequestNotification,
+  startNotificationCleanup,
+  stopNotificationCleanup,
   type P2PExtension,
 } from "../src/notification.js";
 
@@ -180,6 +182,71 @@ describe("handleOwnerReply", () => {
     expect(to).toBe(OWNER_JID);
     expect(message).toContain("iris");
     expect(message.toLowerCase()).toContain("error");
+  });
+});
+
+describe("handleOwnerReply — delete ordering (Finding 2)", () => {
+  it("removes the pending entry even when ACCEPT handler throws", async () => {
+    await sendFriendRequestNotification("jack", "j".repeat(64), "k".repeat(64), "ch10", "test", "sig10");
+    mockSend.mockClear();
+
+    const p2pAccept = vi.fn().mockRejectedValue(new Error("p2p unavailable"));
+    const p2p = (): P2PExtension => ({ acceptFriendRequest: p2pAccept });
+
+    await handleOwnerReply(OWNER_JID, "ACCEPT", p2p);
+
+    // A second ACCEPT should find no pending requests (entry was cleaned up in finally)
+    mockSend.mockClear();
+    const consumed = await handleOwnerReply(OWNER_JID, "ACCEPT", p2p);
+    expect(consumed).toBe(true);
+    expect(p2pAccept).toHaveBeenCalledOnce(); // only once — not a second time
+  });
+
+  it("removes the pending entry even when DENY handler throws", async () => {
+    await sendFriendRequestNotification("kim", "l".repeat(64), "m".repeat(64), "ch11", "test", "sig11");
+    mockSend.mockClear();
+
+    const p2pDeny = vi.fn().mockRejectedValue(new Error("p2p unavailable"));
+    const p2p = (): P2PExtension => ({ denyFriendRequest: p2pDeny });
+
+    await handleOwnerReply(OWNER_JID, "DENY", p2p);
+
+    // A second DENY should find no pending requests
+    mockSend.mockClear();
+    const consumed = await handleOwnerReply(OWNER_JID, "DENY", p2p);
+    expect(consumed).toBe(true);
+    expect(p2pDeny).toHaveBeenCalledOnce(); // only called once
+  });
+});
+
+describe("startNotificationCleanup / stopNotificationCleanup (Finding 3)", () => {
+  it("periodically invokes cleanupExpiredNotifications via the interval", async () => {
+    vi.useFakeTimers();
+    await sendFriendRequestNotification("leo", "a".repeat(64), "b".repeat(64), "ch12", "general", "sig12");
+
+    startNotificationCleanup();
+
+    // Advance past TTL so entries become stale
+    vi.advanceTimersByTime(16 * 60 * 1000);
+
+    stopNotificationCleanup();
+
+    // After the interval fires, the expired entry should have been pruned
+    mockSend.mockClear();
+    const consumed = await handleOwnerReply(OWNER_JID, "ACCEPT", () => ({}));
+    expect(consumed).toBe(true);
+    expect(mockSend).not.toHaveBeenCalled(); // no pending entry remains
+
+    vi.useRealTimers();
+  });
+
+  it("stopNotificationCleanup prevents further cleanup ticks", () => {
+    vi.useFakeTimers();
+    startNotificationCleanup();
+    stopNotificationCleanup();
+    // Should not throw if called again when no interval is active
+    stopNotificationCleanup();
+    vi.useRealTimers();
   });
 });
 

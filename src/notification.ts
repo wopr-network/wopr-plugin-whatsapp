@@ -36,9 +36,31 @@ export interface PendingFriendRequest {
 const pendingRequests: Map<string, PendingFriendRequest> = new Map();
 
 let _getOwnerNumber: () => string | undefined = () => undefined;
+let _cleanupInterval: ReturnType<typeof setInterval> | undefined;
 
 export function initNotification(getOwnerNumber: () => string | undefined): void {
   _getOwnerNumber = getOwnerNumber;
+}
+
+/**
+ * Start a periodic timer that removes expired pending requests every minute.
+ * Safe to call multiple times — clears any existing timer first.
+ */
+export function startNotificationCleanup(): void {
+  if (_cleanupInterval !== undefined) {
+    clearInterval(_cleanupInterval);
+  }
+  _cleanupInterval = setInterval(() => cleanupExpiredNotifications(), 60_000);
+}
+
+/**
+ * Stop the periodic cleanup timer. Call during plugin shutdown.
+ */
+export function stopNotificationCleanup(): void {
+  if (_cleanupInterval !== undefined) {
+    clearInterval(_cleanupInterval);
+    _cleanupInterval = undefined;
+  }
 }
 
 // ============================================================================
@@ -152,13 +174,11 @@ export async function handleOwnerReply(
     return true; // consumed, but nothing to act on
   }
 
-  pendingRequests.delete(oldest.signature);
-
   const p2p = getP2pExtension();
 
-  if (normalised === "ACCEPT") {
-    if (p2p?.acceptFriendRequest) {
-      try {
+  try {
+    if (normalised === "ACCEPT") {
+      if (p2p?.acceptFriendRequest) {
         const result = await p2p.acceptFriendRequest(
           oldest.requestFrom,
           oldest.pubkey,
@@ -169,36 +189,29 @@ export async function handleOwnerReply(
         const replyMsg = result?.acceptMessage ?? `Friend request from ${oldest.requestFrom} accepted.`;
         await sendMessageInternal(toJid(ownerNumber), replyMsg);
         logger.info({ msg: "Friend request accepted", from: oldest.requestFrom });
-      } catch (err) {
-        logger.error({ msg: "Failed to accept friend request", error: String(err) });
+      } else {
         await sendMessageInternal(
           toJid(ownerNumber),
-          `Failed to accept friend request from ${oldest.requestFrom}: ${err}`,
+          `Accepted friend request from ${oldest.requestFrom} (P2P extension not available).`,
         );
       }
     } else {
-      await sendMessageInternal(
-        toJid(ownerNumber),
-        `Accepted friend request from ${oldest.requestFrom} (P2P extension not available).`,
-      );
-    }
-  } else {
-    // DENY
-    if (p2p?.denyFriendRequest) {
-      try {
+      // DENY
+      if (p2p?.denyFriendRequest) {
         await p2p.denyFriendRequest(oldest.requestFrom, oldest.signature);
         logger.info({ msg: "Friend request denied", from: oldest.requestFrom });
         await sendMessageInternal(toJid(ownerNumber), `Friend request from ${oldest.requestFrom} denied.`);
-      } catch (err) {
-        logger.error({ msg: "Failed to deny friend request", error: String(err) });
-        await sendMessageInternal(
-          toJid(ownerNumber),
-          `Failed to deny friend request from ${oldest.requestFrom}: ${err}`,
-        );
+      } else {
+        await sendMessageInternal(toJid(ownerNumber), `Friend request from ${oldest.requestFrom} denied.`);
       }
-    } else {
-      await sendMessageInternal(toJid(ownerNumber), `Friend request from ${oldest.requestFrom} denied.`);
     }
+  } catch (err) {
+    logger.error({ msg: "Failed to handle friend request", error: String(err) });
+    await sendMessageInternal(toJid(ownerNumber), `Error handling friend request from ${oldest.requestFrom}: ${err}`);
+  } finally {
+    // Delete only after the callback attempt — ensures the entry is not
+    // silently discarded if the p2p extension throws before confirmation.
+    pendingRequests.delete(oldest.signature);
   }
 
   return true;

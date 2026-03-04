@@ -36,6 +36,8 @@ import {
   initNotification,
   type P2PExtension,
   sendFriendRequestNotification,
+  startNotificationCleanup,
+  stopNotificationCleanup,
 } from "./notification.js";
 import type { PluginContextWithStorage, PluginStorageAPI } from "./storage.js";
 import { WHATSAPP_CREDS_SCHEMA, WHATSAPP_CREDS_TABLE, WHATSAPP_KEYS_SCHEMA, WHATSAPP_KEYS_TABLE } from "./storage.js";
@@ -305,6 +307,7 @@ const plugin: WOPRPlugin = {
     initChannelProvider(() => agentIdentity.name || "WOPR");
 
     initNotification(() => config.ownerNumber);
+    startNotificationCleanup();
 
     initMessageHandler({
       getCtx: () => ctx,
@@ -388,6 +391,7 @@ const plugin: WOPRPlugin = {
   },
 
   async shutdown(): Promise<void> {
+    stopNotificationCleanup();
     cancelAllStreams();
     clearAllTypingIntervals();
     if (ctx?.unregisterChannelProvider) {
