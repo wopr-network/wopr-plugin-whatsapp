@@ -9,6 +9,8 @@ import type {
   ChannelCommand,
   ChannelMessageContext,
   ChannelMessageParser,
+  ChannelNotificationCallbacks,
+  ChannelNotificationPayload,
   ChannelProvider,
   WhatsAppMessage,
 } from "./types.js";
@@ -17,8 +19,20 @@ const registeredParsers: Map<string, ChannelMessageParser> = new Map();
 
 let _getBotUsername: () => string = () => "WOPR";
 
+type SendNotificationFn = (
+  channelId: string,
+  payload: ChannelNotificationPayload,
+  callbacks?: ChannelNotificationCallbacks,
+) => Promise<void>;
+
+let _sendNotification: SendNotificationFn | null = null;
+
 export function initChannelProvider(getBotUsername: () => string): void {
   _getBotUsername = getBotUsername;
+}
+
+export function setSendNotification(fn: SendNotificationFn): void {
+  _sendNotification = fn;
 }
 
 export function getRegisteredParsers(): Map<string, ChannelMessageParser> {
@@ -69,6 +83,16 @@ export const whatsappChannelProvider: ChannelProvider = {
 
   getBotUsername(): string {
     return _getBotUsername();
+  },
+
+  async sendNotification(
+    channelId: string,
+    payload: ChannelNotificationPayload,
+    callbacks?: ChannelNotificationCallbacks,
+  ): Promise<void> {
+    if (_sendNotification) {
+      await _sendNotification(channelId, payload, callbacks);
+    }
   },
 };
 
