@@ -17,7 +17,7 @@ import fsSync from "node:fs";
 import path from "node:path";
 import type { WASocket } from "@whiskeysockets/baileys";
 import { z } from "zod";
-import { initChannelProvider, whatsappChannelProvider } from "./channel-provider.js";
+import { initChannelProvider, setSendNotification, whatsappChannelProvider } from "./channel-provider.js";
 import { clearAllSessionState, clearRegisteredCommands, initCommands, sessionOverrides } from "./commands.js";
 import {
   clearCleanups,
@@ -43,7 +43,6 @@ import type { PluginContextWithStorage, PluginStorageAPI } from "./storage.js";
 import { WHATSAPP_CREDS_SCHEMA, WHATSAPP_CREDS_TABLE, WHATSAPP_KEYS_SCHEMA, WHATSAPP_KEYS_TABLE } from "./storage.js";
 import type {
   AgentIdentity,
-  ConfigField,
   ConfigSchema,
   PluginManifest,
   WhatsAppConfig,
@@ -152,7 +151,7 @@ export const configSchema: ConfigSchema = {
       label: "Pairing Requests",
       hidden: true,
       default: {},
-    } as ConfigField,
+    },
   ],
 };
 
@@ -305,6 +304,19 @@ const plugin: WOPRPlugin = {
     });
 
     initChannelProvider(() => agentIdentity.name || "WOPR");
+
+    setSendNotification(async (channelId, payload) => {
+      if (payload.type === "p2p:friendRequest:pending") {
+        await sendFriendRequestNotification(
+          payload.from ?? "",
+          payload.pubkey ?? "",
+          payload.encryptPub ?? "",
+          channelId,
+          payload.channelName ?? "",
+          payload.signature ?? "",
+        );
+      }
+    });
 
     initNotification(() => config.ownerNumber);
     startNotificationCleanup();

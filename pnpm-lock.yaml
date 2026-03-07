@@ -12,8 +12,8 @@ importers:
         specifier: ^6.7.9
         version: 6.17.16(eslint@9.39.3)(qrcode-terminal@0.12.0)(typescript@5.9.3)
       '@wopr-network/plugin-types':
-        specifier: ^0.7.1
-        version: 0.7.1(zod@4.3.6)
+        specifier: ^0.9.0
+        version: 0.9.0(zod@4.3.6)
       pino:
         specifier: ^10.3.1
         version: 10.3.1
@@ -680,8 +680,8 @@ packages:
     resolution: {tarball: https://codeload.github.com/WhiskeySockets/libsignal-node/tar.gz/1c30d7d7e76a3b0aa120b04dc6a26f5a12dccf67}
     version: 2.0.1
 
-  '@wopr-network/plugin-types@0.7.1':
-    resolution: {integrity: sha512-8qUjjo3uC8sIcb/VS0LHAxsg53Q7sI/A3BlvUPMgLLia8VBzocHXsek2pTRMbNcxqNgzsx6Biur4GlQK7mAMJg==}
+  '@wopr-network/plugin-types@0.9.0':
+    resolution: {integrity: sha512-IZuOS2yDedofI8sSpspSE/Bl/7e2Z6MrDUlE6KdxCVGW7lS8lsoFBKuA/epcC3v9qqcIaghWc0IE0g4INRJCLw==}
     peerDependencies:
       zod: ^4.3.6
 
@@ -2122,7 +2122,7 @@ snapshots:
       curve25519-js: 0.0.4
       protobufjs: 6.8.8
 
-  '@wopr-network/plugin-types@0.7.1(zod@4.3.6)':
+  '@wopr-network/plugin-types@0.9.0(zod@4.3.6)':
     dependencies:
       zod: 4.3.6
 

@@ -10,8 +10,11 @@ export type {
   ChannelCommandContext,
   ChannelMessageContext,
   ChannelMessageParser,
+  ChannelNotificationCallbacks,
+  ChannelNotificationPayload,
   ChannelProvider,
   ChannelRef,
+  ConfigField,
   ConfigSchema,
   PluginCapability,
   PluginCategory,
@@ -24,17 +27,7 @@ export type {
   WOPRPluginContext,
 } from "@wopr-network/plugin-types";
 
-// Import ConfigField so we can extend it
-import type { ConfigField as SharedConfigField } from "@wopr-network/plugin-types";
 import type { RetryConfig } from "./retry.js";
-
-/**
- * Extended ConfigField with `hidden` support used by this plugin's
- * config schema (e.g., the pairingRequests field).
- */
-export interface ConfigField extends SharedConfigField {
-  hidden?: boolean;
-}
 
 export interface WhatsAppMessage {
   id: string;
