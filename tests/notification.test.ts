@@ -20,10 +20,10 @@ import {
   cleanupExpiredNotifications,
   handleOwnerReply,
   initNotification,
+  type P2PExtension,
   sendFriendRequestNotification,
   startNotificationCleanup,
   stopNotificationCleanup,
-  type P2PExtension,
 } from "../src/notification.js";
 
 const OWNER = "+15551234567";
@@ -51,7 +51,14 @@ describe("sendFriendRequestNotification", () => {
   });
 
   it("sends a WhatsApp message to the owner and returns true", async () => {
-    const result = await sendFriendRequestNotification("alice", "a".repeat(64), "b".repeat(64), "ch1", "general", "sig1");
+    const result = await sendFriendRequestNotification(
+      "alice",
+      "a".repeat(64),
+      "b".repeat(64),
+      "ch1",
+      "general",
+      "sig1",
+    );
     expect(result).toBe(true);
     expect(mockSend).toHaveBeenCalledOnce();
     const [toArg, msgArg] = mockSend.mock.calls[0] as [string, string];
