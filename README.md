@@ -1,9 +1,17 @@
+# ⚠️ This package has moved
+
+This package is now maintained in the [wopr-plugins monorepo](https://github.com/wopr-network/wopr-plugins/tree/main/packages/plugin-whatsapp).
+
+This repository is archived and no longer accepts contributions.
+
+---
+
 # wopr-plugin-whatsapp
 
 [![npm version](https://img.shields.io/npm/v/wopr-plugin-whatsapp.svg)](https://www.npmjs.com/package/wopr-plugin-whatsapp)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![WOPR](https://img.shields.io/badge/WOPR-Plugin-blue)](https://github.com/TSavo/wopr)
-[![Baileys](https://img.shields.io/badge/Powered%20by-Baileys-25D366?logo=whatsapp)](https://github.com/WhiskeySockets/Baileys)
+[![Baileys](https://img.shields.io/badge/Powered                    y-Baileys-25D366?logo=whatsapp)](https://github.com/WhiskeySockets/Baileys)
 
 > WhatsApp integration for [WOPR](https://github.com/TSavo/wopr) using [Baileys](https://github.com/WhiskeySockets/Baileys) (WhatsApp Web).
 
